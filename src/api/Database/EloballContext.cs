@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using Microsoft.EntityFrameworkCore;
 
@@ -33,6 +33,7 @@ public partial class EloballContext : DbContext
 
             entity.Property(e => e.Id).HasColumnName("id");
             entity.Property(e => e.PlayerWonId).HasColumnName("playerWonId");
+            entity.Property(e => e.Timestamp).HasColumnName("timestamp");
         });
 
         modelBuilder.Entity<Player>(entity =>
