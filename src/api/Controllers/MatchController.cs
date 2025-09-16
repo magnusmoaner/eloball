@@ -40,7 +40,13 @@ public class MatchController(EloballContext context) : ControllerBase
         var result = match.Calculate();
         foreach (var player in players)
         {
-            player.Elo = result.GetRatingAfter(eloPlayers.Single(x => x.playerId == player.Id).eloPlayerIdentifier);
+            var currentElo = player.Elo;
+            var newElo = result.GetRatingAfter(eloPlayers.Single(x => x.playerId == player.Id).eloPlayerIdentifier);
+
+            var difference = newElo - currentElo;
+
+            player.Elo = players.Count > 2 ? currentElo + difference / 2 : newElo;
+                
             context.Players.Update(player);
         }
 
