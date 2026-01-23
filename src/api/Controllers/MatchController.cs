@@ -15,8 +15,7 @@ public class MatchController(EloballContext context) : ControllerBase
     {
         var newMatch = new Match()
         {
-            PlayerWonId = matchRecordSubmit.TeamWonId,
-            Timestamp = DateTimeOffset.Now
+            PlayerWonId = matchRecordSubmit.TeamWonId
         };
         var addedMatch = context.Matches.Add(newMatch);
         await context.SaveChangesAsync();

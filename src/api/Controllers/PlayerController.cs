@@ -10,9 +10,7 @@ public class PlayerController(EloballContext context) : ControllerBase
     [HttpGet(Name = "GetPlayers")]
     public IEnumerable<Player> Get()
     {
-        var players = context.Players
-            .Where(x => x.PlayerMatches.Any(y => y.Match.Timestamp >= DateTimeOffset.Now.AddDays(-21)))
-            .ToList();
+        var players = context.Players.ToList();
         return players;
     }
 
