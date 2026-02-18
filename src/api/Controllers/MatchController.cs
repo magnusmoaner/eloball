@@ -1,5 +1,7 @@
+using api.Database;
 using EloCalculator;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace api.Controllers;
 
@@ -13,9 +15,13 @@ public class MatchController(EloballContext context) : ControllerBase
     [HttpPost(Name = "PostMatch")]
     public async Task Post([FromBody] MatchRecordSubmit matchRecordSubmit)
     {
+        // Get active season
+        var activeSeason = await context.Seasons.FirstOrDefaultAsync(s => s.IsActive);
+
         var newMatch = new Match()
         {
-            PlayerWonId = matchRecordSubmit.TeamWonId
+            PlayerWonId = matchRecordSubmit.TeamWonId,
+            SeasonId = activeSeason?.Id
         };
         var addedMatch = context.Matches.Add(newMatch);
         await context.SaveChangesAsync();

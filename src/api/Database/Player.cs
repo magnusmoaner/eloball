@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 
-namespace api;
+namespace api.Database;
 
 public partial class Player
 {
@@ -11,5 +11,11 @@ public partial class Player
 
     public int Elo { get; set; }
 
+    public DateTime CreatedDateTime { get; set; }
+
+    public DateTime UpdatedDateTime { get; set; }
+
     public virtual ICollection<PlayerMatch> PlayerMatches { get; set; } = new List<PlayerMatch>();
+
+    public virtual ICollection<PlayerSeason> PlayerSeasons { get; set; } = new List<PlayerSeason>();
 }
