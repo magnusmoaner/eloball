@@ -20,6 +20,7 @@ public class SeasonController(EloballContext context) : ControllerBase
     public async Task<ActionResult<Season>> GetActive()
     {
         var activeSeason = await context.Seasons
+            .Include(s => s.Matches)
             .FirstOrDefaultAsync(s => s.IsActive);
 
         if (activeSeason == null)
@@ -31,7 +32,7 @@ public class SeasonController(EloballContext context) : ControllerBase
     [HttpGet("{id}", Name = "GetSeason")]
     public async Task<ActionResult<Season>> GetById(int id)
     {
-        var season = await context.Seasons.FindAsync(id);
+        var season = await context.Seasons.Include(s => s.Matches).FirstOrDefaultAsync(s => s.Id == id);
 
         if (season == null)
             return NotFound();
