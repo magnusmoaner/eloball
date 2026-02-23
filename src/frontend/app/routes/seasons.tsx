@@ -1,4 +1,4 @@
-import { useGetSeasonsQuery, useGetSeasonLeaderboardQuery, useGetPlayersQuery, useGetActiveSeasonQuery, useEndSeasonMutation, useCreateSeasonMutation } from "../../apis/foosball/foosball";
+import { useGetSeasonsQuery, useGetSeasonLeaderboardQuery, useGetActiveSeasonQuery, useEndSeasonMutation, useCreateSeasonMutation } from "../../apis/foosball/foosball";
 import { Link } from "react-router";
 import { Calendar, Crown, Trophy, ChevronRight, Gamepad2, TrendingUp } from "lucide-react";
 import type { LeaderboardEntry, Season } from "../../apis/foosball/types";
@@ -186,6 +186,26 @@ function EloHistoryChart({ seasons, pastSeasons }: { seasons: Season[]; pastSeas
   );
 }
 
+const adjectives = [
+  "Shadow", "Phantom", "Stealth", "Rogue", "Cipher", "Crypto", "Binary",
+  "Quantum", "Zero-Day", "Kernel", "Firewall", "Daemon", "Rootkit", "Brute",
+  "Covert", "Silent", "Dark", "Iron", "Neon", "Obsidian", "Recursive",
+  "Volatile", "Encrypted", "Forbidden", "Overclocked", "Reckless",
+];
+
+const nouns = [
+  "Protocol", "Exploit", "Payload", "Fortress", "Breach", "Vector", "Epoch",
+  "Overflow", "Heist", "Siege", "Recon", "Ops", "Cipher", "Blitz",
+  "Takedown", "Lockdown", "Uprising", "Showdown", "Gambit", "Offensive",
+  "Onslaught", "Incursion", "Mandate", "Endgame", "Override",
+];
+
+function generateSeasonName(): string {
+  const adj = adjectives[Math.floor(Math.random() * adjectives.length)];
+  const noun = nouns[Math.floor(Math.random() * nouns.length)];
+  return `${adj} ${noun}`;
+}
+
 export default function Seasons() {
   const { data: seasons, isLoading } = useGetSeasonsQuery();
   const { data: activeSeason } = useGetActiveSeasonQuery();
@@ -197,16 +217,24 @@ export default function Seasons() {
   const [submitting, setSubmitting] = useState(false);
 
   const handleStartNewSeason = async () => {
-    if (!activeSeason || !newName.trim()) return;
+    if (!newName.trim()) return;
     setSubmitting(true);
+    if (activeSeason) {
+      try {
+        await endSeason(activeSeason.id).unwrap();
+      } catch {
+        toast.error("Failed to end current season.");
+        setSubmitting(false);
+        return;
+      }
+    }
     try {
-      await endSeason(activeSeason.id).unwrap();
       await createSeason({ name: newName.trim() }).unwrap();
       toast.success(`New season "${newName.trim()}" started!`);
       setDialogOpen(false);
       setNewName("");
-    } catch (err) {
-      toast.error("Failed to start new season. Please try again.");
+    } catch {
+      toast.error("Season ended but failed to create new one. Try again.");
     } finally {
       setSubmitting(false);
     }
@@ -253,17 +281,15 @@ export default function Seasons() {
       )}
 
       {/* Start New Season — sticky at bottom */}
-      {activeSeason && (
-        <div className="sticky bottom-20 md:bottom-0 z-40 flex justify-center pt-8 pb-4 mt-2 bg-gradient-to-b from-transparent to-background">
-          <button
-            onClick={() => setDialogOpen(true)}
-            className="cursor-pointer bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl px-8 py-3 font-bold shadow-lg shadow-emerald-600/25 inline-flex items-center gap-2 hover:scale-105 active:scale-95 transition-all"
-          >
-            <Calendar size={20} />
-            Start New Season
-          </button>
-        </div>
-      )}
+      <div className="sticky bottom-20 md:bottom-0 z-40 flex justify-center pt-8 pb-4 mt-2 bg-gradient-to-b from-transparent to-background">
+        <button
+          onClick={() => { setNewName(generateSeasonName()); setDialogOpen(true); }}
+          className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl px-8 py-3 font-bold shadow-lg shadow-emerald-600/25 inline-flex items-center gap-2 hover:scale-105 active:scale-95 transition-all"
+        >
+          <Calendar size={20} />
+          Start New Season
+        </button>
+      </div>
 
       {/* New Season Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -271,7 +297,9 @@ export default function Seasons() {
           <DialogHeader>
             <DialogTitle>Start New Season</DialogTitle>
             <DialogDescription>
-              This will end <strong>{activeSeason?.name}</strong>, save all player stats, and reset everyone's ELO to 1000.
+              {activeSeason
+                ? <>This will end <strong>{activeSeason.name}</strong>, save all player stats, and reset everyone's ELO to 1000.</>
+                : "This will create a new active season."}
             </DialogDescription>
           </DialogHeader>
           <div className="py-4">
@@ -280,7 +308,7 @@ export default function Seasons() {
               type="text"
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
-              placeholder="e.g. Season 2"
+              placeholder="e.g. Shadow Protocol"
               className="w-full rounded-xl border border-border bg-background px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
               disabled={submitting}
               autoFocus
