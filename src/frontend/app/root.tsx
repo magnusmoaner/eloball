@@ -75,8 +75,9 @@ export function Layout({ children }: { children: React.ReactNode }) {
               <main>{children}</main>
 
               {/* Mobile bottom tabs */}
-              <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-gradient-to-t from-background from-60% to-transparent pointer-events-none [&>*]:pointer-events-auto">
-                <div className="flex items-center justify-around h-16 px-2">
+              <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50">
+                <div className="absolute inset-0 bg-gradient-to-t from-background from-60% to-transparent pointer-events-none" />
+                <div className="relative flex items-center justify-around h-16 px-2">
                   {navItems.map(({ to, label, icon: Icon, activeMobile }) => (
                     <NavLink
                       key={to}
