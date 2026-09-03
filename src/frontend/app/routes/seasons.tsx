@@ -1,5 +1,5 @@
 import { skipToken } from "@reduxjs/toolkit/query";
-import { useGetSeasonsQuery, useGetSeasonLeaderboardQuery, useGetActiveSeasonQuery, useGetPlayerMatchesQuery, useEndSeasonMutation, useCreateSeasonMutation } from "../../apis/foosball/foosball";
+import { useGetSeasonsQuery, useGetSeasonLeaderboardQuery, useGetSeasonLeaderboardsQuery, useGetActiveSeasonQuery, useGetPlayerMatchesQuery, useEndSeasonMutation, useCreateSeasonMutation } from "../../apis/foosball/foosball";
 import { Link } from "react-router";
 import { Calendar, Crown, Trophy, ChevronRight, Dices, Gamepad2, TrendingUp } from "lucide-react";
 import type { Season } from "../../apis/foosball/types";
@@ -167,27 +167,28 @@ function EloTooltip({ active, payload, label, statuses }: {
 }
 
 function EloHistoryChart({ seasons, pastSeasons }: { seasons: Season[]; pastSeasons: Season[] }) {
-  // Fetch leaderboards for all past seasons
+  // Fetch leaderboards for all past seasons with a single hook. The season count
+  // changes when a season is ended, so a hook per season would break React's
+  // hook-order rule ("Rendered more hooks than during the previous render").
   const leagueId = useCurrentLeague();
-  const leaderboardQueries = pastSeasons.map(s => useGetSeasonLeaderboardQuery(s.id));
+  const pastIds = pastSeasons.map(s => s.id);
+  const { data: leaderboards } = useGetSeasonLeaderboardsQuery(pastIds);
   const { data: allPlayerMatches } = useGetPlayerMatchesQuery(leagueId ?? skipToken);
-  const allLoaded = leaderboardQueries.every(q => q.data !== undefined);
 
-  if (!allLoaded || pastSeasons.length < 1) return null;
+  if (!leaderboards || pastSeasons.length < 1) return null;
 
   // Collect all unique player names
   const playerSet = new Set<string>();
-  leaderboardQueries.forEach(q => {
-    q.data?.forEach(e => playerSet.add(e.playerName));
+  pastSeasons.forEach(s => {
+    leaderboards[s.id]?.forEach(e => playerSet.add(e.playerName));
   });
   const allPlayers = Array.from(playerSet);
 
   // Build chart data: one point per season (chronological order)
   const orderedPastSeasons = [...pastSeasons].reverse(); // oldest first
-  const orderedQueries = [...leaderboardQueries].reverse();
 
-  const chartData = orderedPastSeasons.map((season, i) => {
-    const lb = orderedQueries[i].data ?? [];
+  const chartData = orderedPastSeasons.map(season => {
+    const lb = leaderboards[season.id] ?? [];
     const point: Record<string, string | number> = { name: season.name };
     lb.forEach(entry => {
       if (entry.latestElo != null) {
@@ -199,8 +200,8 @@ function EloHistoryChart({ seasons, pastSeasons }: { seasons: Season[]; pastSeas
 
   // Per-season rank status (active/inactive/calibrating) for tooltip annotations.
   const statuses: Record<string, Record<string, RankStatus>> = {};
-  orderedPastSeasons.forEach((season, i) => {
-    const lb = orderedQueries[i].data ?? [];
+  orderedPastSeasons.forEach(season => {
+    const lb = leaderboards[season.id] ?? [];
     const stats = computePlayerStats(allPlayerMatches ?? [], season.id);
     const refTime = season.endDate ? new Date(season.endDate).getTime() : Date.now();
     const map: Record<string, RankStatus> = {};

@@ -80,6 +80,21 @@ export const foosballApi = createApi({
             query: (id) => `season/${id}/leaderboard`,
             providesTags: ["season"]
         }),
+        // Leaderboards for several seasons in one hook call. The number of seasons
+        // can change between renders, so callers must not call a hook per season.
+        getSeasonLeaderboards: builder.query<Record<number, LeaderboardEntry[]>, number[]>({
+            async queryFn(ids, _api, _extra, fetchWithBQ) {
+                const results = await Promise.all(ids.map(id => fetchWithBQ(`season/${id}/leaderboard`)));
+                const out: Record<number, LeaderboardEntry[]> = {};
+                for (let i = 0; i < ids.length; i++) {
+                    const r = results[i];
+                    if (r.error) return { error: r.error };
+                    out[ids[i]] = r.data as LeaderboardEntry[];
+                }
+                return { data: out };
+            },
+            providesTags: ["season"]
+        }),
         getPlayerMatches: builder.query<PlayerMatchRecord[], number>({
             query: (leagueId) => `player/playerMatches?leagueId=${leagueId}`,
             providesTags: ["match"]
@@ -153,6 +168,7 @@ export const {
     useGetActiveSeasonQuery,
     useGetSeasonQuery,
     useGetSeasonLeaderboardQuery,
+    useGetSeasonLeaderboardsQuery,
     useGetPlayerMatchesQuery,
     useEndSeasonMutation,
     useCreateSeasonMutation,
