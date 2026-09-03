@@ -14,22 +14,6 @@ export function meta() {
   return [{ title: "Eloball — Play" }];
 }
 
-function eloBadgeColor(elo: number): string {
-  if (elo >= 1100) return "bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-400/30";
-  if (elo >= 1050) return "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-400/30";
-  if (elo >= 1000) return "bg-blue-500/15 text-blue-700 dark:text-blue-400 border-blue-400/30";
-  if (elo >= 950) return "bg-slate-500/15 text-slate-600 dark:text-slate-400 border-slate-400/30";
-  return "bg-red-500/10 text-red-600 dark:text-red-400 border-red-400/30";
-}
-
-function eloBadgeOnDark(elo: number): string {
-  if (elo >= 1100) return "bg-amber-500 text-white border-amber-400";
-  if (elo >= 1050) return "bg-emerald-500 text-white border-emerald-400";
-  if (elo >= 1000) return "bg-blue-500 text-white border-blue-400";
-  if (elo >= 950) return "bg-slate-500 text-white border-slate-400";
-  return "bg-red-500 text-white border-red-400";
-}
-
 export default function Game() {
   const leagueId = useCurrentLeague();
   const { data: players, isLoading: playersLoading } = useGetPlayersQuery(leagueId ?? skipToken);
@@ -39,6 +23,7 @@ export default function Game() {
   const [postMatch, { isLoading: submitting, isSuccess }] = usePostMatchMutation();
   const [isEgg, setIsEgg] = useState(false);
   const [started, setStarted] = useState(false);
+  const [sortBy, setSortBy] = useState<"name" | "elo">("name");
 
   // Per-player rating = their latestElo in the active season (1000 if they haven't played it).
   const eloById = new Map((leaderboard ?? []).map(e => [e.playerId, e.latestElo ?? e.startingElo]));
@@ -65,22 +50,24 @@ export default function Game() {
       ? (team1Elo < team2Elo ? 1 : 2)
       : null;
 
-  const isSelected = (id: number) => selected.some(p => p.player.id === id);
 
-  const addToTeam = (player: { id: number; name: string }, team: number) => {
-    if (isSelected(player.id)) {
-      // If already selected, switch team
+  const teamName = (team: number) => (team === 1 ? "Red" : "Blue");
+
+  // Put a player on a team. Switches team if already picked; if the team is full,
+  // swaps out the most recently added player on that team.
+  const setTeam = (player: { id: number; name: string }, team: number) => {
+    const current = selected.find(p => p.player.id === player.id);
+    if (current?.team === team) {
       removePlayer(player.id);
+      return;
     }
     const teamPlayers = team === 1 ? team1 : team2;
     if (teamPlayers.length >= 2) {
-      toast.warning(`Team ${team === 1 ? "Red" : "Blue"} is full`);
-      return;
+      const bumped = teamPlayers[teamPlayers.length - 1];
+      removePlayer(bumped.player.id);
+      toast.info(`${bumped.player.name} swapped out of ${teamName(team)}`);
     }
-    if (selected.length >= 4 && !isSelected(player.id)) {
-      toast.warning("Maximum 4 players per match");
-      return;
-    }
+    if (current) removePlayer(player.id);
     addPlayer({ player, team });
   };
 
@@ -139,7 +126,10 @@ export default function Game() {
     );
   }
 
-  const sortedPlayers = players ? [...players].sort((a, b) => a.name.localeCompare(b.name)) : [];
+  const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name, "da", { sensitivity: "base" });
+  const sortedPlayers = players
+    ? [...players].sort((a, b) => sortBy === "elo" ? (eloOf(b.id) - eloOf(a.id)) || byName(a, b) : byName(a, b))
+    : [];
   return (
     <div className="max-w-2xl mx-auto px-4 py-6">
       <div className="flex items-center justify-center gap-2 mb-4 flex-wrap">
@@ -162,7 +152,9 @@ export default function Game() {
         <div className="grid grid-cols-2 gap-3 relative">
           {/* Team Red */}
           <div>
-            <h3 className="font-extrabold text-sm text-red-300 mb-2 text-center uppercase tracking-wider">Team Red</h3>
+            <h3 className="font-extrabold text-sm text-red-300 mb-2 text-center uppercase tracking-wider">
+              Team Red{!started && startingTeam === 1 && <span className="ml-2 align-middle inline-block rounded-full bg-red-500 text-white text-[10px] px-2 py-0.5">Starts</span>}
+            </h3>
             <div className="space-y-2">
               {[0, 1].map(slot => {
                 const p = team1[slot];
@@ -176,9 +168,7 @@ export default function Game() {
                       <div className="flex items-center justify-between w-full">
                         <div>
                           <p className="font-bold text-sm text-white">{p.player.name}</p>
-                          <span className={`inline-block text-[10px] font-bold px-1.5 py-0.5 rounded border mt-0.5 ${eloBadgeOnDark(eloOf(p.player.id))}`}>
-                            {eloOf(p.player.id)}
-                          </span>
+                          <p className="text-sm font-extrabold tabular-nums text-white/70 mt-0.5">{eloOf(p.player.id)}</p>
                         </div>
                         {!started && (
                           <button onClick={() => removePlayer(p.player.id)} className="text-white/40 hover:text-white p-1">
@@ -197,7 +187,9 @@ export default function Game() {
 
           {/* Team Blue */}
           <div>
-            <h3 className="font-extrabold text-sm text-blue-300 mb-2 text-center uppercase tracking-wider">Team Blue</h3>
+            <h3 className="font-extrabold text-sm text-blue-300 mb-2 text-center uppercase tracking-wider">
+              Team Blue{!started && startingTeam === 2 && <span className="ml-2 align-middle inline-block rounded-full bg-blue-500 text-white text-[10px] px-2 py-0.5">Starts</span>}
+            </h3>
             <div className="space-y-2">
               {[0, 1].map(slot => {
                 const p = team2[slot];
@@ -211,9 +203,7 @@ export default function Game() {
                       <div className="flex items-center justify-between w-full">
                         <div>
                           <p className="font-bold text-sm text-white">{p.player.name}</p>
-                          <span className={`inline-block text-[10px] font-bold px-1.5 py-0.5 rounded border mt-0.5 ${eloBadgeOnDark(eloOf(p.player.id))}`}>
-                            {eloOf(p.player.id)}
-                          </span>
+                          <p className="text-sm font-extrabold tabular-nums text-white/70 mt-0.5">{eloOf(p.player.id)}</p>
                         </div>
                         {!started && (
                           <button onClick={() => removePlayer(p.player.id)} className="text-white/40 hover:text-white p-1">
@@ -239,17 +229,6 @@ export default function Game() {
           </div>
         ) : (
           <div className="flex gap-2 mt-3 relative">
-            {startingTeam && (
-              <div
-                className={`inline-flex items-center rounded-full px-3 text-xs font-bold backdrop-blur-sm border ${
-                  startingTeam === 1
-                    ? "bg-red-500/25 border-red-400/40 text-red-200"
-                    : "bg-blue-500/25 border-blue-400/40 text-blue-200"
-                }`}
-              >
-                {startingTeam === 1 ? "Red starts" : "Blue starts"}
-              </div>
-            )}
             <Button
               onClick={calibrateTeams}
               disabled={!canCalibrate || submitting}
@@ -261,9 +240,10 @@ export default function Game() {
             <Button
               onClick={swapTeams}
               disabled={selected.length < 2 || submitting}
-              className="rounded-xl bg-white/15 hover:bg-white/25 text-white border-0 backdrop-blur-sm"
+              className="rounded-xl bg-white/15 hover:bg-white/25 text-white font-bold border-0 backdrop-blur-sm"
             >
-              <ArrowLeftRight size={16} />
+              <ArrowLeftRight size={16} className="mr-1.5" />
+              Switch
             </Button>
           </div>
         )}
@@ -332,57 +312,78 @@ export default function Game() {
       {/* Player Selection Grid */}
       {!started && (
       <div>
-        <h2 className="text-sm font-bold text-muted-foreground uppercase tracking-wide mb-3">Select Players</h2>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-bold text-muted-foreground uppercase tracking-wide">Add players to Red or Blue team</h2>
+          <div className="inline-flex rounded-lg border border-border overflow-hidden divide-x divide-border bg-background text-[11px] font-bold uppercase tracking-wide" role="group" aria-label="Sort players">
+            {(["name", "elo"] as const).map(key => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setSortBy(key)}
+                aria-pressed={sortBy === key}
+                className={`px-2.5 py-1 cursor-pointer transition-colors ${
+                  sortBy === key ? "bg-foreground text-background" : "text-muted-foreground hover:bg-muted"
+                }`}
+              >
+                {key === "name" ? "A–Z" : "ELO"}
+              </button>
+            ))}
+          </div>
+        </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           {sortedPlayers.map(player => {
-            const sel = isSelected(player.id);
             const teamEntry = selected.find(p => p.player.id === player.id);
+            const onRed = teamEntry?.team === 1;
+            const onBlue = teamEntry?.team === 2;
+            const redFull = !onRed && team1.length >= 2;
+            const blueFull = !onBlue && team2.length >= 2;
+
+            const segment = (team: 1 | 2, active: boolean, full: boolean) => {
+              const label = team === 1 ? "Red" : "Blue";
+              const activeCls = team === 1 ? "bg-red-500 text-white" : "bg-blue-500 text-white";
+              const idleCls = team === 1
+                ? "text-red-600 dark:text-red-400 hover:bg-red-500/10"
+                : "text-blue-600 dark:text-blue-400 hover:bg-blue-500/10";
+              const fullCls = team === 1
+                ? "text-red-500/50 hover:bg-red-500/10"
+                : "text-blue-500/50 hover:bg-blue-500/10";
+              return (
+                <button
+                  type="button"
+                  onClick={() => setTeam(player, team)}
+                  disabled={submitting}
+                  aria-pressed={active}
+                  aria-label={active ? `Remove ${player.name} from ${label}` : full ? `Swap ${player.name} onto ${label}` : `Add ${player.name} to ${label}`}
+                  title={full ? `${label} is full — tap to swap in` : undefined}
+                  className={`min-h-9 min-w-14 px-3 text-xs font-bold uppercase tracking-wide cursor-pointer transition-colors active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed ${
+                    active ? activeCls : full ? fullCls : idleCls
+                  }`}
+                >
+                  {full ? "Full" : label}
+                </button>
+              );
+            };
 
             return (
               <div
                 key={player.id}
-                className={`rounded-xl border-2 p-3 transition-all ${
-                  sel
-                    ? teamEntry?.team === 1
-                      ? "border-red-400 bg-red-50 dark:bg-red-500/10"
-                      : "border-blue-400 bg-blue-50 dark:bg-blue-500/10"
-                    : "border-border hover:border-muted-foreground/30"
+                className={`rounded-xl border-2 px-3 py-2 transition-all ${
+                  onRed
+                    ? "border-red-400 bg-red-50 dark:bg-red-500/10"
+                    : onBlue
+                      ? "border-blue-400 bg-blue-50 dark:bg-blue-500/10"
+                      : "border-border hover:border-muted-foreground/30"
                 }`}
               >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <p className="font-bold text-sm truncate">{player.name}</p>
-                    <span className={`inline-flex text-[10px] font-bold px-1.5 py-0.5 rounded border shrink-0 ${eloBadgeColor(eloOf(player.id))}`}>
-                      {eloOf(player.id)}
-                    </span>
+                <div className="flex items-center gap-3">
+                  <p className="flex-1 min-w-0 font-bold text-sm truncate">{player.name}</p>
+                  <p className={`text-sm font-extrabold tabular-nums shrink-0 ${teamEntry ? "" : "text-muted-foreground"}`}>
+                    {eloOf(player.id)}
+                  </p>
+                  <div className="inline-flex rounded-lg border border-border overflow-hidden shrink-0 divide-x divide-border bg-background">
+                    {segment(1, onRed, redFull)}
+                    {segment(2, onBlue, blueFull)}
                   </div>
-
-                  {sel ? (
-                    <button
-                      onClick={() => removePlayer(player.id)}
-                      disabled={submitting}
-                      className="text-muted-foreground hover:text-destructive p-1 shrink-0"
-                    >
-                      <X size={14} />
-                    </button>
-                  ) : (
-                    <div className="flex gap-1 shrink-0">
-                      <button
-                        onClick={() => addToTeam(player, 1)}
-                        disabled={submitting || team1.length >= 2}
-                        className="px-2.5 py-1 text-[10px] font-bold uppercase rounded-lg bg-red-500 text-white hover:bg-red-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors active:scale-95"
-                      >
-                        Red
-                      </button>
-                      <button
-                        onClick={() => addToTeam(player, 2)}
-                        disabled={submitting || team2.length >= 2}
-                        className="px-2.5 py-1 text-[10px] font-bold uppercase rounded-lg bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-30 disabled:cursor-not-allowed transition-colors active:scale-95"
-                      >
-                        Blue
-                      </button>
-                    </div>
-                  )}
                 </div>
               </div>
             );
