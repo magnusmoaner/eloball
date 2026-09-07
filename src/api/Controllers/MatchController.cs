@@ -1,3 +1,4 @@
+using api.Auth;
 using api.Database;
 using EloCalculator;
 using Microsoft.AspNetCore.Mvc;
@@ -7,7 +8,7 @@ namespace api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-public class MatchController(EloballContext context) : ControllerBase
+public class MatchController(EloballContext context, ProfileResolver profiles) : ControllerBase
 {
     public record MatchRecord(int PlayerId, int TeamId);
 
@@ -16,11 +17,25 @@ public class MatchController(EloballContext context) : ControllerBase
     [HttpPost(Name = "PostMatch")]
     public async Task<ActionResult> Post([FromBody] MatchRecordSubmit matchRecordSubmit)
     {
+        // A match rewrites every participant's rating, so this is the endpoint that most needs
+        // the league to be closed: you must play in the league you are reporting a result for.
+        if (!await profiles.IsMemberAsync(User, matchRecordSubmit.LeagueId))
+            return Forbid();
+
         // Active season for the league the match is played in.
         var activeSeason = await context.Seasons
             .FirstOrDefaultAsync(s => s.IsActive && s.LeagueId == matchRecordSubmit.LeagueId);
         if (activeSeason == null)
             return BadRequest("No active season for this league.");
+
+        // And every player named must be on that league's roster. GetOrCreatePlayerSeason below
+        // creates a rating row on demand, so an unchecked id would silently enrol an outsider —
+        // or invent standings for someone who has never played here.
+        var submittedPlayerIds = matchRecordSubmit.Matches.Select(m => m.PlayerId).Distinct().ToList();
+        var rosterCount = await context.LeagueMemberships
+            .CountAsync(m => m.LeagueId == matchRecordSubmit.LeagueId && submittedPlayerIds.Contains(m.PlayerId));
+        if (rosterCount != submittedPlayerIds.Count)
+            return BadRequest("Every player must be a member of this league.");
 
         var newMatch = new Match
         {

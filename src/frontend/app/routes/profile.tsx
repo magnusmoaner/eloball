@@ -1,9 +1,12 @@
-import { useAuth0 } from "@auth0/auth0-react";
+import { useAuth } from "~/auth/AuthProvider";
 import { useState } from "react";
 import { useDispatch } from "react-redux";
 import { skipToken } from "@reduxjs/toolkit/query";
 import { toast } from "~/lib/toast";
 import {
+    KeyRound,
+    QrCode,
+    Ticket,
     Check,
     Clock,
     Crown,
@@ -26,7 +29,6 @@ import {
     useGetMeQuery,
     useRenamePlayerMutation,
     useGetMyLeaguesQuery,
-    useGetLeaguesQuery,
     useGetLeagueMembersQuery,
     useGetActiveSeasonQuery,
     useGetSeasonLeaderboardQuery,
@@ -44,6 +46,8 @@ import { setCurrentLeague } from "~/leagueSlice";
 import { useCurrentLeague } from "~/lib/useCurrentLeague";
 import { CurrentLeagueBadge } from "~/components/CurrentLeagueBadge";
 import { randomLeagueName } from "~/lib/leagueName";
+import { InviteDialog } from "~/components/InviteDialog";
+import { ChangePasswordDialog } from "~/components/ChangePasswordDialog";
 import { Button } from "~/components/ui/button";
 import {
     Dialog,
@@ -56,15 +60,6 @@ import {
 
 export function meta() {
     return [{ title: "Eloball — Profile" }];
-}
-
-function providerLabel(sub: string | undefined): string {
-    if (!sub) return "Account";
-    const prefix = sub.split("|")[0];
-    if (prefix.startsWith("google")) return "Google";
-    if (prefix === "github") return "GitHub";
-    if (prefix === "auth0") return "Email";
-    return prefix;
 }
 
 function initialsFrom(name: string | undefined, email: string | undefined): string {
@@ -171,7 +166,7 @@ function ManageMembersDialog({ league, myPlayerId, onClose }: { league: MyLeague
 }
 
 export default function Profile() {
-    const { user, isLoading, logout } = useAuth0();
+    const { user, isLoading, logout } = useAuth();
     const dispatch = useDispatch();
     const currentLeagueId = useCurrentLeague();
 
@@ -195,17 +190,19 @@ export default function Profile() {
     const [renameOpen, setRenameOpen] = useState(false);
     const [renameValue, setRenameValue] = useState("");
     // League dialogs
-    const [findOpen, setFindOpen] = useState(false);
+    const [joinOpen, setJoinOpen] = useState(false);
+    const [joinCode, setJoinCode] = useState("");
+    const [inviteTarget, setInviteTarget] = useState<MyLeague | null>(null);
+    const [passwordOpen, setPasswordOpen] = useState(false);
     const [createOpen, setCreateOpen] = useState(false);
     const [newLeagueName, setNewLeagueName] = useState("");
+    const [newSeasonName, setNewSeasonName] = useState("Season 1");
     const [leaveTarget, setLeaveTarget] = useState<MyLeague | null>(null);
     const [deleteTarget, setDeleteTarget] = useState<MyLeague | null>(null);
     const [renameLeagueTarget, setRenameLeagueTarget] = useState<MyLeague | null>(null);
     const [leagueNameValue, setLeagueNameValue] = useState("");
     const [manageTarget, setManageTarget] = useState<MyLeague | null>(null);
 
-    const { data: allLeagues } = useGetLeaguesQuery(undefined, { skip: !findOpen });
-    const joinable = (allLeagues ?? []).filter((l) => !l.isMember);
 
     const handleRename = async () => {
         const name = renameValue.trim();
@@ -224,13 +221,17 @@ export default function Profile() {
         toast.success(`Switched to ${l.name}`);
     };
 
-    const handleJoin = async (id: number, name: string) => {
+    const handleJoin = async () => {
+        const code = joinCode.trim().toUpperCase();
+        if (!code) return;
         try {
-            await joinLeague(id).unwrap();
-            toast.success(`Joined ${name}`);
-            setFindOpen(false);
+            const joined = await joinLeague(code).unwrap();
+            dispatch(setCurrentLeague(joined.id));
+            toast.success(`Joined ${joined.name}`);
+            setJoinCode("");
+            setJoinOpen(false);
         } catch {
-            toast.error("Couldn't join that league.");
+            toast.error("That invite code isn't valid.");
         }
     };
 
@@ -253,11 +254,12 @@ export default function Profile() {
         const name = newLeagueName.trim();
         if (!name) return;
         try {
-            const created = await createLeague({ name }).unwrap();
+            const created = await createLeague({ name, seasonName: newSeasonName.trim() || undefined }).unwrap();
             dispatch(setCurrentLeague(created.id));
             toast.success(`Created ${created.name}`);
             setCreateOpen(false);
             setNewLeagueName("");
+            setNewSeasonName("Season 1");
         } catch {
             toast.error("Couldn't create the league.");
         }
@@ -305,19 +307,14 @@ export default function Profile() {
     }
     if (!user) return null;
 
-    const provider = providerLabel(user.sub);
-    const lastSignedIn = formatRelative(user.updated_at);
     const currentLeague = myLeagues?.find((l) => l.id === currentLeagueId) ?? null;
 
     return (
         <div className="max-w-2xl mx-auto px-4 py-6">
             <div className="text-center mb-8 animate-slide-up">
-                <Avatar src={user.picture} name={user.name} email={user.email} />
-                <h1 className="text-2xl md:text-3xl font-extrabold">{user.name ?? user.nickname ?? "Player"}</h1>
-                <p className="text-sm text-muted-foreground mt-1">
-                    Signed in with {provider}
-                    {lastSignedIn && <> · {lastSignedIn}</>}
-                </p>
+                <Avatar src={undefined} name={me?.name} email={user.email} />
+                <h1 className="text-2xl md:text-3xl font-extrabold">{me?.name ?? "Player"}</h1>
+                <p className="text-sm text-muted-foreground mt-1">{user.email}</p>
                 {currentLeague && (
                     <div className="mt-3">
                         <CurrentLeagueBadge inline />
@@ -333,23 +330,22 @@ export default function Profile() {
                         <h2 className="text-sm font-bold text-muted-foreground uppercase tracking-wide">Account</h2>
                     </div>
                     <div className="flex items-center gap-2 text-sm">
-                        <span className="font-medium truncate">{user.email ?? "No email"}</span>
-                        {user.email && (user.email_verified ? (
-                            <span title="Email verified" className="shrink-0 inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 rounded-full px-2 py-0.5">
-                                <ShieldCheck size={11} /> Verified
+                        <span className="font-medium truncate">{user.email}</span>
+                        {user.emailConfirmed ? (
+                            <span title="Email confirmed" className="shrink-0 inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 rounded-full px-2 py-0.5">
+                                <ShieldCheck size={11} /> Confirmed
                             </span>
                         ) : (
-                            <span title="Email not verified" className="shrink-0 inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400 bg-amber-500/10 rounded-full px-2 py-0.5">
-                                <ShieldAlert size={11} /> Unverified
+                            <span title="Email not confirmed" className="shrink-0 inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400 bg-amber-500/10 rounded-full px-2 py-0.5">
+                                <ShieldAlert size={11} /> Unconfirmed
                             </span>
-                        ))}
-                        <span className="ml-auto shrink-0 text-[10px] font-bold uppercase tracking-wider bg-muted text-muted-foreground rounded-full px-2 py-0.5">{provider}</span>
+                        )}
                     </div>
-                    {lastSignedIn && (
-                        <div className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">
-                            <Clock size={12} /> Last signed in {lastSignedIn}
-                        </div>
-                    )}
+                    <div className="mt-3">
+                        <Button variant="outline" size="sm" className="cursor-pointer" onClick={() => setPasswordOpen(true)}>
+                            <KeyRound size={14} /> Change password
+                        </Button>
+                    </div>
                 </section>
 
                 {/* Player */}
@@ -420,6 +416,9 @@ export default function Profile() {
                                                         <Button size="sm" variant="outline" className="cursor-pointer" onClick={() => { setLeagueNameValue(league.name); setRenameLeagueTarget(league); }}>
                                                             <Pencil size={13} /> Rename
                                                         </Button>
+                                                        <Button size="sm" variant="outline" className="cursor-pointer" onClick={() => setInviteTarget(league)}>
+                                                            <QrCode size={13} /> Invite
+                                                        </Button>
                                                         <Button size="sm" variant="outline" className="cursor-pointer" onClick={() => setManageTarget(league)}>
                                                             <Settings2 size={13} /> Members
                                                         </Button>
@@ -447,8 +446,8 @@ export default function Profile() {
                     </div>
 
                     <div className="mt-3 grid grid-cols-2 gap-2">
-                        <Button variant="outline" size="sm" className="cursor-pointer" onClick={() => setFindOpen(true)}>
-                            <Plus size={14} /> Find a league
+                        <Button variant="outline" size="sm" className="cursor-pointer" onClick={() => setJoinOpen(true)}>
+                            <Ticket size={14} /> Join with code
                         </Button>
                         <Button variant="outline" size="sm" className="cursor-pointer" onClick={() => { setNewLeagueName(randomLeagueName()); setCreateOpen(true); }}>
                             <Shield size={14} /> Create league
@@ -458,7 +457,7 @@ export default function Profile() {
 
                 <div className="mt-2 flex justify-center animate-slide-up" style={{ animationDelay: "180ms" }}>
                     <button
-                        onClick={() => logout({ logoutParams: { returnTo: window.location.origin } })}
+                        onClick={() => { void logout(); }}
                         className="inline-flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium text-muted-foreground cursor-pointer transition-all active:scale-95 hover:bg-destructive hover:text-white"
                     >
                         <LogOut size={16} /> Sign out
@@ -466,29 +465,30 @@ export default function Profile() {
                 </div>
             </div>
 
-            {/* Find a league */}
-            <Dialog open={findOpen} onOpenChange={setFindOpen}>
-                <DialogContent className="sm:max-w-lg max-h-[85vh] flex flex-col gap-4">
+            <InviteDialog league={inviteTarget} onClose={() => setInviteTarget(null)} />
+            <ChangePasswordDialog open={passwordOpen} onClose={() => setPasswordOpen(false)} />
+
+            {/* Join with an invite code */}
+            <Dialog open={joinOpen} onOpenChange={setJoinOpen}>
+                <DialogContent className="sm:max-w-sm">
                     <DialogHeader>
-                        <DialogTitle>Find a league</DialogTitle>
-                        <DialogDescription>Join any league below.</DialogDescription>
+                        <DialogTitle>Join a league</DialogTitle>
+                        <DialogDescription>Enter the invite code you were given.</DialogDescription>
                     </DialogHeader>
-                    {joinable.length === 0 ? (
-                        <p className="text-sm text-muted-foreground py-4 text-center">No other leagues to join.</p>
-                    ) : (
-                        <div className="flex flex-col gap-2 overflow-y-auto pr-1 max-h-[65vh]">
-                            {joinable.map((l) => (
-                                <div key={l.id} className="flex items-center gap-3 rounded-xl border border-border/50 bg-background px-4 py-3">
-                                    <div className="shrink-0 size-9 rounded-lg bg-muted text-muted-foreground flex items-center justify-center"><Shield size={18} /></div>
-                                    <div className="flex-1 min-w-0">
-                                        <p className="font-semibold text-sm truncate">{l.name}</p>
-                                        <p className="text-xs text-muted-foreground flex items-center gap-1"><Users size={11} />{l.memberCount} {l.memberCount === 1 ? "member" : "members"}</p>
-                                    </div>
-                                    <Button size="sm" className="cursor-pointer shrink-0" onClick={() => handleJoin(l.id, l.name)}>Join</Button>
-                                </div>
-                            ))}
-                        </div>
-                    )}
+                    <input
+                        value={joinCode}
+                        onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
+                        onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleJoin(); } }}
+                        autoFocus
+                        autoCapitalize="characters"
+                        spellCheck={false}
+                        placeholder="ABCD1234"
+                        className="w-full px-3 py-2.5 rounded-xl bg-background border border-border text-sm font-mono tracking-widest outline-none focus:border-primary"
+                    />
+                    <DialogFooter>
+                        <Button variant="outline" className="cursor-pointer" onClick={() => setJoinOpen(false)}>Cancel</Button>
+                        <Button className="cursor-pointer" disabled={joinCode.trim().length < 6} onClick={handleJoin}>Join</Button>
+                    </DialogFooter>
                 </DialogContent>
             </Dialog>
 
@@ -517,6 +517,16 @@ export default function Profile() {
                             <Dices size={18} />
                         </button>
                     </div>
+                    <input
+                        value={newSeasonName}
+                        onChange={(e) => setNewSeasonName(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleCreate(); } }}
+                        placeholder="First season name"
+                        className="w-full px-3 py-2.5 rounded-xl bg-background border border-border text-sm outline-none focus:border-primary"
+                    />
+                    <p className="text-xs text-muted-foreground -mt-1">
+                        Matches are recorded against a season, so we'll start one for you.
+                    </p>
                     <DialogFooter>
                         <Button variant="outline" className="cursor-pointer" onClick={() => setCreateOpen(false)}>Cancel</Button>
                         <Button className="cursor-pointer" disabled={!newLeagueName.trim() || creating} onClick={handleCreate}>

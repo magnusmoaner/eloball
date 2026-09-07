@@ -1,3 +1,4 @@
+using api.Auth;
 using api.Database;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -6,11 +7,17 @@ namespace api.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-public class SeasonController(EloballContext context) : ControllerBase
+public class SeasonController(EloballContext context, ProfileResolver profiles) : ControllerBase
 {
+    // Seasons belong to a league, and leagues are invite-only. Every endpoint here is therefore
+    // gated on membership — creating and ending included, which any member may do, not just the
+    // owner. Without this a signed-in stranger could read, open or close any league's seasons by
+    // guessing an id, which would make the invite gate decorative.
     [HttpGet]
-    public async Task<IEnumerable<Season>> Get([FromQuery] int leagueId)
+    public async Task<ActionResult<IEnumerable<Season>>> Get([FromQuery] int leagueId)
     {
+        if (!await profiles.IsMemberAsync(User, leagueId)) return Forbid();
+
         return await context.Seasons
             .Where(s => s.LeagueId == leagueId)
             .OrderByDescending(s => s.StartDate)
@@ -20,6 +27,8 @@ public class SeasonController(EloballContext context) : ControllerBase
     [HttpGet("active", Name = "GetActiveSeason")]
     public async Task<ActionResult<Season>> GetActive([FromQuery] int leagueId)
     {
+        if (!await profiles.IsMemberAsync(User, leagueId)) return Forbid();
+
         var activeSeason = await context.Seasons
             .Include(s => s.Matches)
             .FirstOrDefaultAsync(s => s.IsActive && s.LeagueId == leagueId);
@@ -33,6 +42,8 @@ public class SeasonController(EloballContext context) : ControllerBase
     [HttpGet("{id}", Name = "GetSeason")]
     public async Task<ActionResult<Season>> GetById(int id)
     {
+        if (!await profiles.IsMemberOfSeasonAsync(User, id)) return Forbid();
+
         var season = await context.Seasons.Include(s => s.Matches).FirstOrDefaultAsync(s => s.Id == id);
 
         if (season == null)
@@ -42,8 +53,10 @@ public class SeasonController(EloballContext context) : ControllerBase
     }
 
     [HttpGet("{id}/leaderboard", Name = "GetSeasonLeaderboard")]
-    public async Task<IEnumerable<object>> GetLeaderboard(int id)
+    public async Task<ActionResult<IEnumerable<object>>> GetLeaderboard(int id)
     {
+        if (!await profiles.IsMemberOfSeasonAsync(User, id)) return Forbid();
+
         var leaderboard = await context.PlayerSeasons
             .Include(ps => ps.Player)
             .Where(ps => ps.SeasonId == id)
@@ -66,6 +79,12 @@ public class SeasonController(EloballContext context) : ControllerBase
     [HttpPost(Name = "CreateSeason")]
     public async Task<ActionResult<Season>> Create([FromBody] CreateSeasonDto dto)
     {
+        // Any member may start a season, not only the owner.
+        if (!await profiles.IsMemberAsync(User, dto.LeagueId)) return Forbid();
+
+        var name = dto.Name?.Trim();
+        if (string.IsNullOrWhiteSpace(name)) return BadRequest("Name is required.");
+
         // Deactivate the league's current active season(s) only.
         var activeSeasons = await context.Seasons
             .Where(s => s.IsActive && s.LeagueId == dto.LeagueId)
@@ -78,7 +97,7 @@ public class SeasonController(EloballContext context) : ControllerBase
 
         var season = new Season
         {
-            Name = dto.Name,
+            Name = name,
             StartDate = dto.StartDate ?? DateTime.Now,
             IsActive = true,
             CreatedAt = DateTime.Now,
@@ -94,6 +113,8 @@ public class SeasonController(EloballContext context) : ControllerBase
     [HttpPost("{id}/end", Name = "EndSeason")]
     public async Task<ActionResult<Season>> EndSeason(int id)
     {
+        if (!await profiles.IsMemberOfSeasonAsync(User, id)) return Forbid();
+
         var season = await context.Seasons.FindAsync(id);
 
         if (season == null)

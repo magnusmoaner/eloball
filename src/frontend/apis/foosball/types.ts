@@ -63,6 +63,16 @@ export interface LeaderboardEntry {
 
 export type LeagueRole = "Owner" | "Member";
 
+export interface LeaguePreview {
+    id: number;
+    name: string;
+    memberCount: number;
+}
+
+export interface LeagueInvite {
+    code: string;
+}
+
 export interface LeagueSummary {
     id: number;
     name: string;

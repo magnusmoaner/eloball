@@ -2,32 +2,34 @@ import {
     isRouteErrorResponse,
     Links,
     Meta,
+    Navigate,
     Outlet,
     Scripts,
     ScrollRestoration,
     NavLink,
     useLocation,
-    useSearchParams,
 } from "react-router";
 import type {Route} from "./+types/root";
 import "../index.css";
-import {store, type RootState} from '~/store'
-import {Provider, useDispatch, useSelector} from "react-redux";
+import {store} from '~/store'
+import {Provider, useDispatch} from "react-redux";
 import {Toaster} from "sonner";
 import {Trophy, Calendar, Swords, BarChart3, Loader2, User} from "lucide-react";
 import PlayerProvider from "~/context/PlayerContext/PlayerProvider";
-import {Auth0Provider, useAuth0} from "@auth0/auth0-react";
-import {setTokenGetter, useGetMeQuery, useGetMyLeaguesQuery} from "../apis/foosball/foosball";
+import {AuthProvider, useAuth} from "~/auth/AuthProvider";
+import {useGetMyLeaguesQuery} from "../apis/foosball/foosball";
 import {useEffect} from "react";
-import {setForbidden} from "~/authSlice";
 import {setCurrentLeague} from "~/leagueSlice";
 import {useCurrentLeague} from "~/lib/useCurrentLeague";
-import {ForbiddenPage} from "~/components/ForbiddenPage";
 import {Onboarding} from "~/components/Onboarding";
 import {LeagueOnboarding} from "~/components/LeagueOnboarding";
 import {LeagueChooser} from "~/components/LeagueChooser";
 
-const AUTH0_AUDIENCE = "https://api.billigeterninger.dk/";
+/** Reachable signed out. The invite landing page is here too, so a QR scan works before sign-in. */
+const PUBLIC_PATHS = ["/login", "/signup", "/forgot-password", "/reset-password", "/confirm-email"];
+
+/** Of those, the ones a signed-in user has no business seeing. */
+const SIGNED_OUT_ONLY = ["/login", "/signup", "/forgot-password", "/reset-password"];
 
 // Toasts use a custom renderer (see ~/lib/toast). Sonner here is only the
 // positioning/animation engine; the visual is fully our own JSX.
@@ -84,72 +86,20 @@ const navItems = [
     },
 ];
 
-function LoginPage() {
-    const {loginWithRedirect, isLoading} = useAuth0();
-    const [searchParams] = useSearchParams();
-
-    const authError = searchParams.get("error");
-    const authErrorDescription = searchParams.get("error_description");
-
-    return (
-        <div className="min-h-screen flex flex-col items-center justify-center px-6">
-            <div className="w-full max-w-sm flex flex-col items-center gap-6 rounded-2xl bg-white dark:bg-neutral-800 p-8 shadow-sm">
-                <img src="/logo.png" alt="Eloball" className="h-auto w-56 object-contain dark:hidden"/>
-                <img src="/logo-dark.png" alt="Eloball" className="h-auto w-56 object-contain hidden dark:block"/>
-                <p className="text-muted-foreground text-center max-w-xs">
-                    Track your foosball ELO rating and compete across seasons.
-                </p>
-
-                {authError && authErrorDescription && (
-                    <div className="w-full rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-700 shadow-sm dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
-                        <p className="font-semibold">Login failed</p>
-                        <p className="mt-1">{authErrorDescription}</p>
-                    </div>
-                )}
-
-                <div className="flex flex-col gap-3 w-full">
-                    <button
-                        onClick={() => loginWithRedirect()}
-                        disabled={isLoading}
-                        className="flex items-center justify-center gap-2 w-full py-3 rounded-xl bg-primary text-primary-foreground font-semibold text-sm transition-opacity hover:opacity-90 disabled:opacity-50"
-                    >
-                        {isLoading && <Loader2 size={16} className="animate-spin"/>}
-                        Log in
-                    </button>
-                    <button
-                        onClick={() => loginWithRedirect({authorizationParams: {screen_hint: "signup"}})}
-                        disabled={isLoading}
-                        className="flex items-center justify-center gap-2 w-full py-3 rounded-xl border border-border font-semibold text-sm transition-colors hover:bg-muted disabled:opacity-50"
-                    >
-                        Sign up
-                    </button>
-                </div>
-            </div>
-        </div>
-    );
-}
-
 function AppShell({children}: { children: React.ReactNode }) {
-    const {isAuthenticated, isLoading, getAccessTokenSilently} = useAuth0();
-    const forbidden = useSelector((s: RootState) => s.auth.forbidden);
+    const {isAuthenticated, isLoading, needsPlayer} = useAuth();
     const dispatch = useDispatch();
     const {pathname} = useLocation();
     const hasFab = pathname === "/" || pathname === "/seasons";
 
-    // Is this account linked to a player yet? (404 → needs onboarding)
-    const {isLoading: meLoading, error: meError} = useGetMeQuery(undefined, {skip: !isAuthenticated});
-    const needsOnboarding = (meError as {status?: number} | undefined)?.status === 404;
+    const isPublic = PUBLIC_PATHS.includes(pathname) || pathname.startsWith("/join/");
 
     // Which leagues is this player in, and which one is open?
-    const currentLeagueId = useCurrentLeague();
     const {data: myLeagues, isLoading: leaguesLoading} = useGetMyLeaguesQuery(undefined, {
-        skip: !isAuthenticated || needsOnboarding,
+        skip: !isAuthenticated || needsPlayer,
     });
+    const currentLeagueId = useCurrentLeague();
     const validCurrent = currentLeagueId != null && (myLeagues?.some(l => l.id === currentLeagueId) ?? false);
-
-    useEffect(() => {
-        if (!isAuthenticated) dispatch(setForbidden(false));
-    }, [isAuthenticated, dispatch]);
 
     // Exactly one league → open it automatically.
     useEffect(() => {
@@ -157,12 +107,6 @@ function AppShell({children}: { children: React.ReactNode }) {
             dispatch(setCurrentLeague(myLeagues[0].id));
         }
     }, [myLeagues, validCurrent, dispatch]);
-
-    if (isAuthenticated) {
-        setTokenGetter(() => getAccessTokenSilently({authorizationParams: {audience: AUTH0_AUDIENCE}}));
-    } else {
-        setTokenGetter(null);
-    }
 
     if (isLoading) {
         return (
@@ -173,22 +117,22 @@ function AppShell({children}: { children: React.ReactNode }) {
     }
 
     if (!isAuthenticated) {
-        return <LoginPage/>;
+        // Signed-out pages render bare; everything else bounces to sign-in.
+        return isPublic ? <>{children}</> : <Navigate to="/login" replace/>;
     }
 
-    if (forbidden) {
-        return <ForbiddenPage/>;
+    if (SIGNED_OUT_ONLY.includes(pathname)) {
+        return <Navigate to="/" replace/>;
     }
 
-    if (meLoading) {
-        return (
-            <div className="min-h-screen flex items-center justify-center">
-                <Loader2 size={32} className="animate-spin text-muted-foreground"/>
-            </div>
-        );
+    // /confirm-email and /join/:code stay reachable while signed in — the first so a link still
+    // works, the second so scanning a QR code parks the invite before onboarding continues.
+    if (isPublic) {
+        return <>{children}</>;
     }
 
-    if (needsOnboarding) {
+    // Onboarding is not skippable: no player, then no league, then the app.
+    if (needsPlayer) {
         return <Onboarding/>;
     }
 
@@ -306,18 +250,7 @@ function AppShell({children}: { children: React.ReactNode }) {
 
 export function Layout({children}: { children: React.ReactNode }) {
     return (
-        <Auth0Provider
-            domain="dev-82kcp8l6j263vhyk.eu.auth0.com"
-            clientId="26B0Dqdn2tZ3QZl3fB6xfZQKjGDnY41W"
-            cacheLocation="localstorage"
-            useRefreshTokens={true}
-            useRefreshTokensFallback={true}
-            authorizationParams={{
-                redirect_uri: import.meta.env.VITE_DOMAIN,
-                audience: AUTH0_AUDIENCE,
-            }}
-        >
-            <html lang="en">
+        <html lang="en">
             <head>
                 <meta charSet="utf-8"/>
                 <meta name="viewport" content="width=device-width, initial-scale=1"/>
@@ -326,6 +259,7 @@ export function Layout({children}: { children: React.ReactNode }) {
             </head>
             <body className="bg-background text-foreground">
             <Provider store={store}>
+                <AuthProvider>
                 <PlayerProvider>
                     <AppShell>{children}</AppShell>
                     {/* Desktop: below the top nav. Mobile: above the bottom tab bar.
@@ -344,12 +278,12 @@ export function Layout({children}: { children: React.ReactNode }) {
                         style={toasterWidth}
                     />
                 </PlayerProvider>
+                </AuthProvider>
             </Provider>
             <ScrollRestoration/>
             <Scripts/>
             </body>
-            </html>
-        </Auth0Provider>
+        </html>
     );
 }
 

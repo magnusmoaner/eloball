@@ -1,23 +1,18 @@
-using System.Security.Claims;
+using api.Auth;
 using api.Database;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
 namespace api.Controllers;
 
-public record ClaimPlayerDto(int PlayerId, string? Email);
-public record CreatePlayerDto(string Name, string? Email);
+public record ClaimPlayerDto(int PlayerId);
+public record CreatePlayerDto(string Name);
 public record RenamePlayerDto(string Name);
 
 [ApiController]
 [Route("api/[controller]")]
-public class PlayerController(EloballContext context) : ControllerBase
+public class PlayerController(EloballContext context, ProfileResolver profiles) : ControllerBase
 {
-    private string CurrentSub =>
-        User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-        ?? User.FindFirst("sub")?.Value
-        ?? throw new InvalidOperationException("No subject claim on the token.");
-
     /// <summary>Players who are members of the given league (the league's roster).</summary>
     [HttpGet(Name = "GetPlayers")]
     public async Task<IEnumerable<Player>> Get([FromQuery] int leagueId)
@@ -33,26 +28,49 @@ public class PlayerController(EloballContext context) : ControllerBase
     [HttpGet("me", Name = "GetMyPlayer")]
     public async Task<ActionResult<Player>> GetMe()
     {
-        var profile = await context.UserProfiles
-            .Include(u => u.Player)
-            .FirstOrDefaultAsync(u => u.Auth0Sub == CurrentSub);
-
+        var profile = await profiles.CurrentProfileAsync(User);
         if (profile?.Player == null)
             return NotFound();
 
         return profile.Player;
     }
 
-    /// <summary>Players not yet claimed by any account — candidates for onboarding.</summary>
+    /// <summary>
+    /// Unclaimed players you could be, narrowed to one league's roster — never the whole database.
+    /// Authorised either by holding that league's invite code or by already being a member; without
+    /// one of those, anyone who signed up could claim to be an existing player.
+    /// </summary>
     [HttpGet("unclaimed", Name = "GetUnclaimedPlayers")]
-    public async Task<IEnumerable<Player>> GetUnclaimed()
+    public async Task<ActionResult<IEnumerable<Player>>> GetUnclaimed(
+        [FromQuery] string? code, [FromQuery] int? leagueId)
     {
+        int targetLeagueId;
+
+        if (!string.IsNullOrWhiteSpace(code))
+        {
+            var league = await context.Leagues.FirstOrDefaultAsync(l => l.InviteCode == code);
+            if (league == null)
+                return NotFound("Unknown invite code.");
+            targetLeagueId = league.Id;
+        }
+        else if (leagueId is int id)
+        {
+            if (!await profiles.IsMemberAsync(User, id))
+                return Forbid();
+            targetLeagueId = id;
+        }
+        else
+        {
+            return BadRequest("Provide an invite code or a league you belong to.");
+        }
+
         var claimedIds = context.UserProfiles
             .Where(u => u.PlayerId != null)
             .Select(u => u.PlayerId!.Value);
 
-        return await context.Players
-            .Where(p => !claimedIds.Contains(p.Id))
+        return await context.LeagueMemberships
+            .Where(m => m.LeagueId == targetLeagueId && !claimedIds.Contains(m.PlayerId))
+            .Select(m => m.Player)
             .OrderBy(p => p.Name)
             .ToListAsync();
     }
@@ -61,7 +79,7 @@ public class PlayerController(EloballContext context) : ControllerBase
     [HttpPost("claim", Name = "ClaimPlayer")]
     public async Task<ActionResult<Player>> Claim([FromBody] ClaimPlayerDto dto)
     {
-        var profile = await context.UserProfiles.FirstOrDefaultAsync(u => u.Auth0Sub == CurrentSub);
+        var profile = await profiles.CurrentProfileAsync(User);
         if (profile?.PlayerId != null)
             return Conflict("This account is already linked to a player.");
 
@@ -72,7 +90,7 @@ public class PlayerController(EloballContext context) : ControllerBase
         if (player == null)
             return NotFound("Player not found.");
 
-        await LinkProfile(profile, player.Id, dto.Email);
+        await LinkProfile(profile, player.Id);
         return player;
     }
 
@@ -80,7 +98,7 @@ public class PlayerController(EloballContext context) : ControllerBase
     [HttpPost(Name = "CreatePlayer")]
     public async Task<ActionResult<Player>> Create([FromBody] CreatePlayerDto dto)
     {
-        var profile = await context.UserProfiles.FirstOrDefaultAsync(u => u.Auth0Sub == CurrentSub);
+        var profile = await profiles.CurrentProfileAsync(User);
         if (profile?.PlayerId != null)
             return Conflict("This account is already linked to a player.");
 
@@ -92,7 +110,7 @@ public class PlayerController(EloballContext context) : ControllerBase
         context.Players.Add(player);
         await context.SaveChangesAsync();
 
-        await LinkProfile(profile, player.Id, dto.Email);
+        await LinkProfile(profile, player.Id);
         return player;
     }
 
@@ -104,9 +122,7 @@ public class PlayerController(EloballContext context) : ControllerBase
         if (string.IsNullOrWhiteSpace(name))
             return BadRequest("Name is required.");
 
-        var profile = await context.UserProfiles
-            .Include(u => u.Player)
-            .FirstOrDefaultAsync(u => u.Auth0Sub == CurrentSub);
+        var profile = await profiles.CurrentProfileAsync(User);
         if (profile?.Player == null)
             return NotFound();
 
@@ -116,11 +132,15 @@ public class PlayerController(EloballContext context) : ControllerBase
         return profile.Player;
     }
 
-    private async Task LinkProfile(UserProfile? profile, int playerId, string? email)
+    private async Task LinkProfile(UserProfile? profile, int playerId)
     {
+        // The email comes from the Identity account, not the client — it is what re-links an
+        // Auth0-era profile, so letting a caller supply it would let them adopt someone else's.
+        var (identityUserId, email) = await profiles.CurrentAccountAsync(User);
+
         if (profile == null)
         {
-            profile = new UserProfile { Auth0Sub = CurrentSub, Email = email };
+            profile = new UserProfile { IdentityUserId = identityUserId, Email = email };
             context.UserProfiles.Add(profile);
         }
         else if (string.IsNullOrEmpty(profile.Email))
@@ -141,7 +161,7 @@ public class PlayerController(EloballContext context) : ControllerBase
             .Include(pm => pm.Match)
             .Where(pm => pm.Match.Season != null && pm.Match.Season.LeagueId == leagueId)
             .ToList();
-        
+
         // Break circular references to avoid serialization issues
         foreach (var playerMatch in playerMatches)
         {
@@ -149,8 +169,7 @@ public class PlayerController(EloballContext context) : ControllerBase
             playerMatch.Player.PlayerMatches = new List<PlayerMatch>();
             playerMatch.Match.PlayerMatches = new List<PlayerMatch>();
         }
-        
+
         return playerMatches;
     }
-
 }
