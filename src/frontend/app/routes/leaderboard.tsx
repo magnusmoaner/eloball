@@ -154,17 +154,31 @@ export default function Leaderboard() {
     return byDate;
   })();
 
-  // Eggs delivered (won a 10-0 shutout) per player, this season
+  // Eggs this season, split by which end of the 10-0 you were on. The egg belongs to whoever
+  // failed to score — that's the whole idiom — so the loser receives it and the winner cooked it.
   const eggsByPlayer = (() => {
-    const map = new Map<number, number>();
+    const map = new Map<number, { received: number; delivered: number }>();
     if (!allPlayerMatches) return map;
     for (const pm of allPlayerMatches) {
-      if (pm.match.seasonId === season.id && pm.match.egg && pm.team === pm.match.playerWonId) {
-        map.set(pm.playerId, (map.get(pm.playerId) ?? 0) + 1);
-      }
+      if (pm.match.seasonId !== season.id || !pm.match.egg) continue;
+      const entry = map.get(pm.playerId) ?? { received: 0, delivered: 0 };
+      if (pm.team === pm.match.playerWonId) entry.delivered++;
+      else entry.received++;
+      map.set(pm.playerId, entry);
     }
     return map;
   })();
+
+  const eggBadge = (playerId: number, className: string) => {
+    const e = eggsByPlayer.get(playerId);
+    if (!e || (e.received === 0 && e.delivered === 0)) return null;
+    return (
+      <span className={`font-bold leading-none inline-flex items-center gap-1.5 ${className}`}>
+        {e.received > 0 && <span title={`Egged ${e.received}\u00d7 — shut out 10-0`}>🥚 {e.received}</span>}
+        {e.delivered > 0 && <span title={`Cooked ${e.delivered}\u00d7 — dealt a 10-0 shutout`}>🍳 {e.delivered}</span>}
+      </span>
+    );
+  };
 
   const matchCount = new Set(
     (allPlayerMatches ?? [])
@@ -221,9 +235,7 @@ const handleSeasonNameClick = () => {
               >
                 <span className="text-2xl mb-1">{medals[1]}</span>
                 <p className="font-extrabold text-sm truncate max-w-full">{entry.playerName}</p>
-                {(eggsByPlayer.get(entry.playerId) ?? 0) > 0 && (
-                  <span className="text-[11px] font-bold leading-none mt-0.5" title="Eggs delivered (10-0)">🥚 {eggsByPlayer.get(entry.playerId)}</span>
-                )}
+                {eggBadge(entry.playerId, "text-[11px] mt-0.5")}
                 <p className="text-xl font-black text-primary tabular-nums">
                   {/* {entry.latestElo ?? entry.startingElo} */}
                   <EloValue value={entry.latestElo ?? entry.startingElo} enabled={isEasterEggActive} />
@@ -248,9 +260,7 @@ const handleSeasonNameClick = () => {
               >
                 <span className="text-3xl mb-1">{medals[0]}</span>
                 <p className="font-extrabold text-lg truncate max-w-full">{entry.playerName}</p>
-                {(eggsByPlayer.get(entry.playerId) ?? 0) > 0 && (
-                  <span className="text-xs font-bold leading-none mt-0.5" title="Eggs delivered (10-0)">🥚 {eggsByPlayer.get(entry.playerId)}</span>
-                )}
+                {eggBadge(entry.playerId, "text-xs mt-0.5")}
                 <p className="text-2xl font-black text-primary tabular-nums">
                   <EloValue value={entry.latestElo ?? entry.startingElo} enabled={isEasterEggActive} />
                 </p>
@@ -275,9 +285,7 @@ const handleSeasonNameClick = () => {
               >
                 <span className="text-2xl mb-1">{medals[2]}</span>
                 <p className="font-extrabold text-sm truncate max-w-full">{entry.playerName}</p>
-                {(eggsByPlayer.get(entry.playerId) ?? 0) > 0 && (
-                  <span className="text-[11px] font-bold leading-none mt-0.5" title="Eggs delivered (10-0)">🥚 {eggsByPlayer.get(entry.playerId)}</span>
-                )}
+                {eggBadge(entry.playerId, "text-[11px] mt-0.5")}
                 <p className="text-xl font-black text-primary tabular-nums">
                   <EloValue value={entry.latestElo ?? entry.startingElo} enabled={isEasterEggActive} />
                 </p>
@@ -313,9 +321,7 @@ const handleSeasonNameClick = () => {
               <div className="flex-1 min-w-0">
                 <p className="font-bold truncate flex items-center gap-1.5">
                   <span className="truncate">{entry.playerName}</span>
-                  {(eggsByPlayer.get(entry.playerId) ?? 0) > 0 && (
-                    <span className="text-xs font-bold shrink-0" title="Eggs delivered (10-0)">🥚 {eggsByPlayer.get(entry.playerId)}</span>
-                  )}
+                  {eggBadge(entry.playerId, "text-xs shrink-0")}
                 </p>
                 {entry.matchesPlayed > 0 && (
                   <p className="text-xs text-muted-foreground">
@@ -353,9 +359,7 @@ const handleSeasonNameClick = () => {
                 <div className="flex-1 min-w-0">
                   <p className="font-bold truncate flex items-center gap-1.5">
                     <span className="truncate">{entry.playerName}</span>
-                    {(eggsByPlayer.get(entry.playerId) ?? 0) > 0 && (
-                      <span className="text-xs font-bold shrink-0" title="Eggs delivered (10-0)">🥚 {eggsByPlayer.get(entry.playerId)}</span>
-                    )}
+                    {eggBadge(entry.playerId, "text-xs shrink-0")}
                   </p>
                   <p className="text-xs text-muted-foreground">
                     {entry.matchesWon}W / {entry.matchesPlayed - entry.matchesWon}L
@@ -389,9 +393,7 @@ const handleSeasonNameClick = () => {
                 <div className="flex-1 min-w-0">
                   <p className="font-bold truncate flex items-center gap-1.5">
                     <span className="truncate">{entry.playerName}</span>
-                    {(eggsByPlayer.get(entry.playerId) ?? 0) > 0 && (
-                      <span className="text-xs font-bold shrink-0" title="Eggs delivered (10-0)">🥚 {eggsByPlayer.get(entry.playerId)}</span>
-                    )}
+                    {eggBadge(entry.playerId, "text-xs shrink-0")}
                   </p>
                   {entry.matchesPlayed > 0 && (
                     <p className="text-xs text-muted-foreground">
@@ -450,7 +452,10 @@ const handleSeasonNameClick = () => {
                           <div className="flex items-center gap-1.5 shrink-0">
                             <span className={`w-2 h-2 rounded-full ${winningTeam === 1 ? "bg-team-red" : "bg-team-red/30"}`} />
                             {match.egg
-                              ? <span className="text-xs" title="Egg — 10-0 shutout">🥚</span>
+                              ? <span
+                                  className="text-xs"
+                                  title={`${(winningTeam === 1 ? team2 : team1).map(pm => pm.player.name).join(" & ")} got egged 10-0`}
+                                >🥚</span>
                               : <span className="text-xs text-muted-foreground font-bold">vs</span>}
                             <span className={`w-2 h-2 rounded-full ${winningTeam === 2 ? "bg-team-blue" : "bg-team-blue/30"}`} />
                           </div>
