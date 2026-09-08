@@ -1,6 +1,6 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { QRCodeCanvas } from "qrcode.react";
-import { Copy, Download, Loader2, Printer, RefreshCw } from "lucide-react";
+import { Copy, Download, Link as LinkIcon, Loader2, Printer, RefreshCw } from "lucide-react";
 import { skipToken } from "@reduxjs/toolkit/query";
 import {
     useGetLeagueInviteQuery,
@@ -26,24 +26,58 @@ export function InviteDialog({ league, onClose }: { league: MyLeague | null; onC
     const [rotate, { isLoading: rotating }] = useRotateLeagueInviteMutation();
     const wrapRef = useRef<HTMLDivElement>(null);
     const [confirmRotate, setConfirmRotate] = useState(false);
+    const [png, setPng] = useState<Blob | null>(null);
 
     const code = invite?.code;
     const url = code ? `${window.location.origin}/join/${code}` : "";
 
     const canvas = () => wrapRef.current?.querySelector("canvas") ?? null;
 
+    // Render the PNG ahead of the click rather than during it. Handing ClipboardItem an unresolved
+    // promise severs the write from the user gesture, and a browser that hasn't already granted
+    // clipboard-write refuses it — which is why the first Copy QR used to fall through to the link
+    // and only worked once something else had been copied.
+    //
+    // Two passes: the logo in the middle is drawn asynchronously by qrcode.react once the image
+    // decodes, so the immediate snapshot can miss it. The second pass catches the finished canvas.
+    useEffect(() => {
+        if (!code) return;
+        let cancelled = false;
+        const snapshot = () => canvas()?.toBlob((b) => { if (b && !cancelled) setPng(b); }, "image/png");
+
+        snapshot();
+        const t = setTimeout(snapshot, 300);
+        return () => { cancelled = true; clearTimeout(t); };
+    }, [code]);
+
     const copyImage = async () => {
         const c = canvas();
         if (!c) return;
         try {
-            const blob = await new Promise<Blob | null>((res) => c.toBlob(res, "image/png"));
-            if (!blob) throw new Error("no blob");
+            // Prefer the blob prepared above; only fall back to generating one now (which may be
+            // refused for lack of a gesture) if the canvas wasn't ready in time.
+            const blob = png ?? new Promise<Blob>((resolve, reject) =>
+                c.toBlob((b) => (b ? resolve(b) : reject(new Error("toBlob returned null"))), "image/png"));
             await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
             toast.success("QR code copied — paste it anywhere.");
         } catch {
-            // Safari and Firefox restrict image writes; the link is the useful fallback.
-            await navigator.clipboard.writeText(url).catch(() => undefined);
-            toast.success("Invite link copied instead.");
+            // Firefox needs a flag for image writes, and some browsers refuse them outright.
+            // Fall back to the link, but only claim success if that actually worked.
+            try {
+                await navigator.clipboard.writeText(url);
+                toast.success("Couldn't copy the image — copied the invite link instead.");
+            } catch {
+                toast.error("Couldn't copy. Use Save, or copy the code below by hand.");
+            }
+        }
+    };
+
+    const copyLink = async () => {
+        try {
+            await navigator.clipboard.writeText(url);
+            toast.success("Invite link copied.");
+        } catch {
+            toast.error("Couldn't copy. Copy the code below by hand.");
         }
     };
 
@@ -148,9 +182,12 @@ export function InviteDialog({ league, onClose }: { league: MyLeague | null; onC
                             {code}
                         </p>
 
-                        <div className="grid grid-cols-3 gap-2">
+                        <div className="grid grid-cols-2 gap-2">
                             <Button variant="outline" size="sm" className="cursor-pointer" onClick={copyImage}>
-                                <Copy size={14} /> Copy
+                                <Copy size={14} /> Copy QR
+                            </Button>
+                            <Button variant="outline" size="sm" className="cursor-pointer" onClick={copyLink}>
+                                <LinkIcon size={14} /> Copy link
                             </Button>
                             <Button variant="outline" size="sm" className="cursor-pointer" onClick={download}>
                                 <Download size={14} /> Save

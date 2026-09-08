@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { useDispatch } from "react-redux";
 import { toast } from "~/lib/toast";
 import { Dices, Loader2, LogOut, Ticket, UserPlus, Users } from "lucide-react";
@@ -10,6 +10,7 @@ import {
 } from "../../apis/foosball/foosball";
 import { setCurrentLeague } from "~/leagueSlice";
 import { randomLeagueName } from "~/lib/leagueName";
+import { generateSeasonName } from "~/lib/seasonName";
 import { Button } from "~/components/ui/button";
 import { useAuth } from "~/auth/AuthProvider";
 import { clearPendingInvite, getPendingInvite } from "~/lib/pendingInvite";
@@ -28,8 +29,7 @@ export function LeagueOnboarding() {
     const [code, setCode] = useState(() => getPendingInvite() ?? "");
     const [showCreate, setShowCreate] = useState(false);
     const [newName, setNewName] = useState("");
-    const [seasonName, setSeasonName] = useState("Season 1");
-    const autoJoined = useRef(false);
+    const [seasonName, setSeasonName] = useState(() => generateSeasonName());
 
     const busy = joining || creating;
 
@@ -49,15 +49,6 @@ export function LeagueOnboarding() {
             toast.error("That invite code isn't valid.");
         }
     };
-
-    // Arrived via an invite link: redeem it without making them press anything.
-    useEffect(() => {
-        const pending = getPendingInvite();
-        if (!pending || autoJoined.current) return;
-        autoJoined.current = true;
-        void join(pending);
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
 
     const handleCreate = async () => {
         const name = newName.trim();
@@ -135,7 +126,7 @@ export function LeagueOnboarding() {
 
                         <button
                             type="button"
-                            onClick={() => { if (!newName.trim()) setNewName(randomLeagueName()); setShowCreate(true); }}
+                            onClick={() => { if (!newName.trim()) setNewName(randomLeagueName()); setSeasonName(generateSeasonName()); setShowCreate(true); }}
                             className="text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer inline-flex items-center justify-center gap-1.5"
                         >
                             <UserPlus size={14} />
@@ -163,12 +154,22 @@ export function LeagueOnboarding() {
                             </button>
                         </div>
                         <label className="text-sm font-semibold mt-1">First season</label>
-                        <input
-                            value={seasonName}
-                            onChange={(e) => setSeasonName(e.target.value)}
-                            placeholder="e.g. Season 1"
-                            className="w-full px-3 py-2.5 rounded-xl bg-background border border-border text-sm outline-none focus:border-primary"
-                        />
+                        <div className="relative">
+                            <input
+                                value={seasonName}
+                                onChange={(e) => setSeasonName(e.target.value)}
+                                placeholder="e.g. Season 1"
+                                className="w-full pl-3 pr-11 py-2.5 rounded-xl bg-background border border-border text-sm outline-none focus:border-primary"
+                            />
+                            <button
+                                type="button"
+                                onClick={() => setSeasonName(generateSeasonName())}
+                                title="Surprise me"
+                                className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
+                            >
+                                <Dices size={18} />
+                            </button>
+                        </div>
                         <p className="text-xs text-muted-foreground -mt-1">
                             Matches are recorded against a season, so we'll start one for you.
                         </p>

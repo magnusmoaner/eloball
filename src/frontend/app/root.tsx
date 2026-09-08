@@ -21,6 +21,7 @@ import {useGetMyLeaguesQuery} from "../apis/foosball/foosball";
 import {useEffect} from "react";
 import {setCurrentLeague} from "~/leagueSlice";
 import {useCurrentLeague} from "~/lib/useCurrentLeague";
+import {useRedeemPendingInvite} from "~/lib/useRedeemInvite";
 import {Onboarding} from "~/components/Onboarding";
 import {LeagueOnboarding} from "~/components/LeagueOnboarding";
 import {LeagueChooser} from "~/components/LeagueChooser";
@@ -101,12 +102,18 @@ function AppShell({children}: { children: React.ReactNode }) {
     const currentLeagueId = useCurrentLeague();
     const validCurrent = currentLeagueId != null && (myLeagues?.some(l => l.id === currentLeagueId) ?? false);
 
+    // A scanned invite is redeemed here, not in LeagueOnboarding: that screen only shows when you
+    // have no leagues, so it never runs for someone who is already a member.
+    const redeemingInvite = useRedeemPendingInvite(isAuthenticated && !needsPlayer && myLeagues !== undefined, myLeagues);
+
     // Exactly one league → open it automatically.
     useEffect(() => {
+        // Not while an invite is being redeemed — that selection wins.
+        if (redeemingInvite) return;
         if (myLeagues && myLeagues.length === 1 && !validCurrent) {
             dispatch(setCurrentLeague(myLeagues[0].id));
         }
-    }, [myLeagues, validCurrent, dispatch]);
+    }, [myLeagues, validCurrent, dispatch, redeemingInvite]);
 
     if (isLoading) {
         return (
@@ -137,6 +144,14 @@ function AppShell({children}: { children: React.ReactNode }) {
     }
 
     if (leaguesLoading || !myLeagues) {
+        return (
+            <div className="min-h-screen flex items-center justify-center">
+                <Loader2 size={32} className="animate-spin text-muted-foreground"/>
+            </div>
+        );
+    }
+
+    if (redeemingInvite) {
         return (
             <div className="min-h-screen flex items-center justify-center">
                 <Loader2 size={32} className="animate-spin text-muted-foreground"/>

@@ -5,7 +5,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace api.Controllers;
 
-public record ClaimPlayerDto(int PlayerId);
+public record ClaimPlayerDto(int PlayerId, string? Code);
 public record CreatePlayerDto(string Name);
 public record RenamePlayerDto(string Name);
 
@@ -15,8 +15,10 @@ public class PlayerController(EloballContext context, ProfileResolver profiles) 
 {
     /// <summary>Players who are members of the given league (the league's roster).</summary>
     [HttpGet(Name = "GetPlayers")]
-    public async Task<IEnumerable<Player>> Get([FromQuery] int leagueId)
+    public async Task<ActionResult<IEnumerable<Player>>> Get([FromQuery] int leagueId)
     {
+        if (!await profiles.IsMemberAsync(User, leagueId)) return Forbid();
+
         return await context.LeagueMemberships
             .Where(m => m.LeagueId == leagueId)
             .Select(m => m.Player)
@@ -90,6 +92,12 @@ public class PlayerController(EloballContext context, ProfileResolver profiles) 
         if (player == null)
             return NotFound("Player not found.");
 
+        // Holding the league's invite code is what entitles you to claim someone on its roster.
+        // Without this, player ids are sequential integers and anyone who signed up could walk
+        // them until they landed on a real person — inheriting that player's identity and history.
+        if (!await MayClaim(dto.PlayerId, dto.Code))
+            return Forbid();
+
         await LinkProfile(profile, player.Id);
         return player;
     }
@@ -130,6 +138,21 @@ public class PlayerController(EloballContext context, ProfileResolver profiles) 
         profile.Player.UpdatedDateTime = DateTime.Now;
         await context.SaveChangesAsync();
         return profile.Player;
+    }
+
+    /// <summary>You may claim a player only inside a league whose invite code you hold.</summary>
+    private async Task<bool> MayClaim(int playerId, string? code)
+    {
+        if (string.IsNullOrWhiteSpace(code))
+            return false;
+
+        var leagueId = await context.Leagues
+            .Where(l => l.InviteCode == code)
+            .Select(l => (int?)l.Id)
+            .FirstOrDefaultAsync();
+
+        return leagueId != null
+            && await context.LeagueMemberships.AnyAsync(m => m.LeagueId == leagueId && m.PlayerId == playerId);
     }
 
     private async Task LinkProfile(UserProfile? profile, int playerId)

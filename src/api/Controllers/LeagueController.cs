@@ -1,5 +1,6 @@
 using api.Auth;
 using api.Database;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -48,6 +49,11 @@ public class LeagueController(EloballContext context, ProfileResolver profiles) 
     /// What an invite code points at, so someone can see which league they're about to join.
     /// Deliberately the only way to look a league up you don't belong to — there is no browse.
     /// </summary>
+    /// <remarks>
+    /// Anonymous: the invite card has to name the league before you have an account, and holding
+    /// an unguessable code is the whole authorisation. Nothing else here is readable without one.
+    /// </remarks>
+    [AllowAnonymous]
     [HttpGet("preview", Name = "PreviewLeague")]
     public async Task<ActionResult<object>> Preview([FromQuery] string code)
     {
@@ -84,8 +90,10 @@ public class LeagueController(EloballContext context, ProfileResolver profiles) 
 
     /// <summary>Members of a league (player id + name + role) — for owner management UI.</summary>
     [HttpGet("{id}/members", Name = "GetLeagueMembers")]
-    public async Task<IEnumerable<object>> Members(int id)
+    public async Task<ActionResult<IEnumerable<object>>> Members(int id)
     {
+        if (!await profiles.IsMemberAsync(User, id)) return Forbid();
+
         return await context.LeagueMemberships
             .Where(m => m.LeagueId == id)
             .OrderByDescending(m => m.Role == Owner)

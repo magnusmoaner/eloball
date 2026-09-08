@@ -46,6 +46,7 @@ import { setCurrentLeague } from "~/leagueSlice";
 import { useCurrentLeague } from "~/lib/useCurrentLeague";
 import { CurrentLeagueBadge } from "~/components/CurrentLeagueBadge";
 import { randomLeagueName } from "~/lib/leagueName";
+import { generateSeasonName } from "~/lib/seasonName";
 import { InviteDialog } from "~/components/InviteDialog";
 import { ChangePasswordDialog } from "~/components/ChangePasswordDialog";
 import { Button } from "~/components/ui/button";
@@ -449,7 +450,7 @@ export default function Profile() {
                         <Button variant="outline" size="sm" className="cursor-pointer" onClick={() => setJoinOpen(true)}>
                             <Ticket size={14} /> Join with code
                         </Button>
-                        <Button variant="outline" size="sm" className="cursor-pointer" onClick={() => { setNewLeagueName(randomLeagueName()); setCreateOpen(true); }}>
+                        <Button variant="outline" size="sm" className="cursor-pointer" onClick={() => { setNewLeagueName(randomLeagueName()); setNewSeasonName(generateSeasonName()); setCreateOpen(true); }}>
                             <Shield size={14} /> Create league
                         </Button>
                     </div>
@@ -499,6 +500,7 @@ export default function Profile() {
                         <DialogTitle>Create a league</DialogTitle>
                         <DialogDescription>You'll be the owner. You can rename or delete it later.</DialogDescription>
                     </DialogHeader>
+                    <label className="text-sm font-semibold -mb-1">League name</label>
                     <div className="relative">
                         <input
                             value={newLeagueName}
@@ -517,13 +519,24 @@ export default function Profile() {
                             <Dices size={18} />
                         </button>
                     </div>
-                    <input
-                        value={newSeasonName}
-                        onChange={(e) => setNewSeasonName(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleCreate(); } }}
-                        placeholder="First season name"
-                        className="w-full px-3 py-2.5 rounded-xl bg-background border border-border text-sm outline-none focus:border-primary"
-                    />
+                    <label className="text-sm font-semibold -mb-1">First season name</label>
+                    <div className="relative">
+                        <input
+                            value={newSeasonName}
+                            onChange={(e) => setNewSeasonName(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleCreate(); } }}
+                            placeholder="First season name"
+                            className="w-full pl-3 pr-11 py-2.5 rounded-xl bg-background border border-border text-sm outline-none focus:border-primary"
+                        />
+                        <button
+                            type="button"
+                            onClick={() => setNewSeasonName(generateSeasonName())}
+                            title="Surprise me"
+                            className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
+                        >
+                            <Dices size={18} />
+                        </button>
+                    </div>
                     <p className="text-xs text-muted-foreground -mt-1">
                         Matches are recorded against a season, so we'll start one for you.
                     </p>

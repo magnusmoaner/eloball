@@ -33,7 +33,7 @@ export const foosballApi = createApi({
                 : `player/unclaimed?leagueId=${arg.leagueId}`,
             providesTags: ["me"]
         }),
-        claimPlayer: builder.mutation<Player, { playerId: number }>({
+        claimPlayer: builder.mutation<Player, { playerId: number; code?: string }>({
             query: (body) => ({ url: 'player/claim', method: 'POST', body }),
             invalidatesTags: ["me", "match"]
         }),

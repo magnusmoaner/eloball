@@ -48,7 +48,7 @@ export function Onboarding() {
     const handleClaim = async () => {
         if (!selected) return;
         try {
-            await claimPlayer({ playerId: selected.id }).unwrap();
+            await claimPlayer({ playerId: selected.id, code: invite ?? undefined }).unwrap();
             await refresh();
             toast.success(`You're now playing as ${selected.name}`);
         } catch {

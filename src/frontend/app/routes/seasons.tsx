@@ -8,6 +8,7 @@ import { useCurrentLeague } from "~/lib/useCurrentLeague";
 import { CurrentLeagueBadge } from "~/components/CurrentLeagueBadge";
 import { useState } from "react";
 import { toast } from "~/lib/toast";
+import { generateSeasonName } from "~/lib/seasonName";
 import { Button } from "~/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "~/components/ui/dialog";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
@@ -240,26 +241,6 @@ function EloHistoryChart({ seasons, pastSeasons }: { seasons: Season[]; pastSeas
       </ResponsiveContainer>
     </div>
   );
-}
-
-const adjectives = [
-  "Shadow", "Phantom", "Stealth", "Rogue", "Cipher", "Crypto", "Binary",
-  "Quantum", "Zero-Day", "Kernel", "Firewall", "Daemon", "Rootkit", "Brute",
-  "Covert", "Silent", "Dark", "Iron", "Neon", "Obsidian", "Recursive",
-  "Volatile", "Encrypted", "Forbidden", "Overclocked", "Reckless",
-];
-
-const nouns = [
-  "Protocol", "Exploit", "Payload", "Fortress", "Breach", "Vector", "Epoch",
-  "Overflow", "Heist", "Siege", "Recon", "Ops", "Cipher", "Blitz",
-  "Takedown", "Lockdown", "Uprising", "Showdown", "Gambit", "Offensive",
-  "Onslaught", "Incursion", "Mandate", "Endgame", "Override",
-];
-
-function generateSeasonName(): string {
-  const adj = adjectives[Math.floor(Math.random() * adjectives.length)];
-  const noun = nouns[Math.floor(Math.random() * nouns.length)];
-  return `${adj} ${noun}`;
 }
 
 export default function Seasons() {
