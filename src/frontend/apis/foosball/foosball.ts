@@ -1,5 +1,5 @@
 import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react'
-import type { LeaderboardEntry, LeagueInvite, LeagueMember, LeaguePreview, MyLeague, Player, PlayerMatchRecord, Season, SubmitMatch } from "./types";
+import type { LeaderboardEntry, LeagueInvite, LeagueMember, LeaguePreview, MyLeague, PublicLeague, Player, PlayerMatchRecord, Season, SubmitMatch } from "./types";
 
 const API_BASE_URL = import.meta.env.VITE_API_URL ?? 'https://api.billigeterninger.dk/api/'
 
@@ -125,8 +125,21 @@ export const foosballApi = createApi({
             query: ({ id, name }) => ({ url: `league/${id}`, method: 'PUT', body: { name } }),
             invalidatesTags: ["league"]
         }),
-        joinLeague: builder.mutation<{ id: number; name: string }, string>({
-            query: (code) => ({ url: 'league/join', method: 'POST', body: { code } }),
+        // By invite code, or by id for a league that has opted into being public.
+        joinLeague: builder.mutation<{ id: number; name: string }, string | { leagueId: number }>({
+            query: (arg) => ({
+                url: 'league/join',
+                method: 'POST',
+                body: typeof arg === 'string' ? { code: arg } : arg,
+            }),
+            invalidatesTags: ["league"]
+        }),
+        getPublicLeagues: builder.query<PublicLeague[], void>({
+            query: () => 'league/public',
+            providesTags: ["league"]
+        }),
+        setLeagueVisibility: builder.mutation<void, { id: number; isPublic: boolean }>({
+            query: ({ id, isPublic }) => ({ url: `league/${id}/visibility`, method: 'POST', body: { isPublic } }),
             invalidatesTags: ["league"]
         }),
         leaveLeague: builder.mutation<void, number>({
@@ -176,6 +189,8 @@ export const {
     useCreateLeagueMutation,
     useRenameLeagueMutation,
     useJoinLeagueMutation,
+    useGetPublicLeaguesQuery,
+    useSetLeagueVisibilityMutation,
     useLeaveLeagueMutation,
     useClaimOwnershipMutation,
     useDelegateOwnershipMutation,

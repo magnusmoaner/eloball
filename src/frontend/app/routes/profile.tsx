@@ -5,6 +5,9 @@ import { skipToken } from "@reduxjs/toolkit/query";
 import { toast } from "~/lib/toast";
 import {
     KeyRound,
+    Share2,
+    Globe,
+    Lock,
     QrCode,
     Ticket,
     Check,
@@ -33,6 +36,8 @@ import {
     useGetActiveSeasonQuery,
     useGetSeasonLeaderboardQuery,
     useCreateLeagueMutation,
+    useSetLeagueVisibilityMutation,
+    useGetPublicLeaguesQuery,
     useRenameLeagueMutation,
     useJoinLeagueMutation,
     useLeaveLeagueMutation,
@@ -48,6 +53,7 @@ import { CurrentLeagueBadge } from "~/components/CurrentLeagueBadge";
 import { randomLeagueName } from "~/lib/leagueName";
 import { generateSeasonName } from "~/lib/seasonName";
 import { InviteDialog } from "~/components/InviteDialog";
+import { ShareAppDialog } from "~/components/ShareAppDialog";
 import { ChangePasswordDialog } from "~/components/ChangePasswordDialog";
 import { Button } from "~/components/ui/button";
 import {
@@ -178,6 +184,7 @@ export default function Profile() {
     const [joinLeague] = useJoinLeagueMutation();
     const [leaveLeague] = useLeaveLeagueMutation();
     const [createLeague, { isLoading: creating }] = useCreateLeagueMutation();
+    const [setVisibility] = useSetLeagueVisibilityMutation();
     const [renameLeague, { isLoading: renamingLeague }] = useRenameLeagueMutation();
     const [claimOwnership] = useClaimOwnershipMutation();
     const [deleteLeague] = useDeleteLeagueMutation();
@@ -193,8 +200,11 @@ export default function Profile() {
     // League dialogs
     const [joinOpen, setJoinOpen] = useState(false);
     const [joinCode, setJoinCode] = useState("");
+    // Only fetched while the join dialog is open.
+    const { data: publicLeagues } = useGetPublicLeaguesQuery(undefined, { skip: !joinOpen });
     const [inviteTarget, setInviteTarget] = useState<MyLeague | null>(null);
     const [passwordOpen, setPasswordOpen] = useState(false);
+    const [shareOpen, setShareOpen] = useState(false);
     const [createOpen, setCreateOpen] = useState(false);
     const [newLeagueName, setNewLeagueName] = useState("");
     const [newSeasonName, setNewSeasonName] = useState("Season 1");
@@ -233,6 +243,28 @@ export default function Profile() {
             setJoinOpen(false);
         } catch {
             toast.error("That invite code isn't valid.");
+        }
+    };
+
+    const handleJoinPublic = async (id: number, name: string) => {
+        try {
+            const joined = await joinLeague({ leagueId: id }).unwrap();
+            dispatch(setCurrentLeague(joined.id));
+            toast.success(`Joined ${name}`);
+            setJoinOpen(false);
+        } catch {
+            toast.error("Couldn't join that league.");
+        }
+    };
+
+    const handleVisibility = async (league: MyLeague) => {
+        try {
+            await setVisibility({ id: league.id, isPublic: !league.isPublic }).unwrap();
+            toast.success(league.isPublic
+                ? `${league.name} is invite-only again`
+                : `${league.name} is now open for anyone to join`);
+        } catch {
+            toast.error("Couldn't change who can join.");
         }
     };
 
@@ -412,16 +444,27 @@ export default function Profile() {
                                                 {!isActive && (
                                                     <Button size="sm" className="cursor-pointer" onClick={() => handleSwitch(league)}>Open</Button>
                                                 )}
+                                                <Button size="sm" variant="outline" className="cursor-pointer" onClick={() => setInviteTarget(league)}>
+                                                    <QrCode size={13} /> Invite
+                                                </Button>
                                                 {isOwner && (
                                                     <>
                                                         <Button size="sm" variant="outline" className="cursor-pointer" onClick={() => { setLeagueNameValue(league.name); setRenameLeagueTarget(league); }}>
                                                             <Pencil size={13} /> Rename
                                                         </Button>
-                                                        <Button size="sm" variant="outline" className="cursor-pointer" onClick={() => setInviteTarget(league)}>
-                                                            <QrCode size={13} /> Invite
-                                                        </Button>
                                                         <Button size="sm" variant="outline" className="cursor-pointer" onClick={() => setManageTarget(league)}>
                                                             <Settings2 size={13} /> Members
+                                                        </Button>
+                                                        <Button
+                                                            size="sm"
+                                                            variant="outline"
+                                                            className="cursor-pointer"
+                                                            title={league.isPublic
+                                                                ? "Anyone can find and join this league"
+                                                                : "Only people with the invite code can join"}
+                                                            onClick={() => handleVisibility(league)}
+                                                        >
+                                                            {league.isPublic ? <><Globe size={13} /> Public</> : <><Lock size={13} /> Private</>}
                                                         </Button>
                                                         <Button size="sm" variant="outline" className="cursor-pointer hover:bg-destructive hover:text-white hover:border-destructive disabled:opacity-40" disabled={league.memberCount > 1} title={league.memberCount > 1 ? "Remove all other members first" : undefined} onClick={() => setDeleteTarget(league)}>
                                                             <Trash2 size={13} /> Delete
@@ -456,6 +499,22 @@ export default function Profile() {
                     </div>
                 </section>
 
+                {/* Invite people to the app itself, not to a league. They land on signup and are
+                    walked through creating their own league. */}
+                <section className="bg-card rounded-2xl border border-border/50 p-5 animate-slide-up" style={{ animationDelay: "150ms" }}>
+                    <div className="flex items-center gap-2 mb-1">
+                        <Share2 size={14} className="text-muted-foreground" />
+                        <h2 className="text-sm font-bold text-muted-foreground uppercase tracking-wide">Spread Eloball</h2>
+                    </div>
+                    <p className="text-sm text-muted-foreground mb-4">
+                        Know another team? Share this and they can start their own league — then you can
+                        play each other.
+                    </p>
+                    <Button variant="outline" size="sm" className="cursor-pointer" onClick={() => setShareOpen(true)}>
+                        <QrCode size={14} /> Get invite QR code
+                    </Button>
+                </section>
+
                 <div className="mt-2 flex justify-center animate-slide-up" style={{ animationDelay: "180ms" }}>
                     <button
                         onClick={() => { void logout(); }}
@@ -468,6 +527,7 @@ export default function Profile() {
 
             <InviteDialog league={inviteTarget} onClose={() => setInviteTarget(null)} />
             <ChangePasswordDialog open={passwordOpen} onClose={() => setPasswordOpen(false)} />
+            <ShareAppDialog open={shareOpen} onClose={() => setShareOpen(false)} />
 
             {/* Join with an invite code */}
             <Dialog open={joinOpen} onOpenChange={setJoinOpen}>
@@ -486,6 +546,25 @@ export default function Profile() {
                         placeholder="ABCD1234"
                         className="w-full px-3 py-2.5 rounded-xl bg-background border border-border text-sm font-mono tracking-widest outline-none focus:border-primary"
                     />
+                    {(publicLeagues?.filter((l) => !l.isMember).length ?? 0) > 0 && (
+                        <div className="flex flex-col gap-1.5">
+                            <p className="text-sm font-semibold">Or join an open league</p>
+                            <div className="max-h-52 overflow-y-auto flex flex-col gap-1.5 -mx-1 px-1">
+                                {publicLeagues!.filter((l) => !l.isMember).map((l) => (
+                                    <div key={l.id} className="flex items-center gap-3 rounded-xl border border-border/50 bg-background px-4 py-2.5">
+                                        <div className="shrink-0 size-8 rounded-lg bg-muted text-muted-foreground flex items-center justify-center">
+                                            <Globe size={15} />
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                            <p className="font-semibold text-sm truncate">{l.name}</p>
+                                            <p className="text-xs text-muted-foreground">{l.memberCount} {l.memberCount === 1 ? "member" : "members"}</p>
+                                        </div>
+                                        <Button size="sm" className="cursor-pointer shrink-0" onClick={() => handleJoinPublic(l.id, l.name)}>Join</Button>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
                     <DialogFooter>
                         <Button variant="outline" className="cursor-pointer" onClick={() => setJoinOpen(false)}>Cancel</Button>
                         <Button className="cursor-pointer" disabled={joinCode.trim().length < 6} onClick={handleJoin}>Join</Button>

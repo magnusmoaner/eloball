@@ -208,6 +208,7 @@ public partial class EloballContext : IdentityUserContext<AppUser>
         modelBuilder.Entity<League>(entity =>
         {
             entity.Property(e => e.InviteCode).HasMaxLength(16).HasColumnName("inviteCode");
+            entity.Property(e => e.IsPublic).HasColumnName("isPublic");
             entity.HasIndex(e => e.InviteCode, "UX_league_inviteCode")
                 .IsUnique()
                 .HasFilter("[inviteCode] IS NOT NULL");

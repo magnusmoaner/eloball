@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { useDispatch } from "react-redux";
 import { toast } from "~/lib/toast";
-import { Dices, Loader2, LogOut, Ticket, UserPlus, Users } from "lucide-react";
+import { Dices, Globe, Loader2, LogOut, Ticket, UserPlus, Users } from "lucide-react";
 import { skipToken } from "@reduxjs/toolkit/query";
 import {
     useGetLeaguePreviewQuery,
+    useGetPublicLeaguesQuery,
     useJoinLeagueMutation,
     useCreateLeagueMutation,
 } from "../../apis/foosball/foosball";
@@ -24,6 +25,7 @@ export function LeagueOnboarding() {
     const { logout } = useAuth();
     const dispatch = useDispatch();
     const [joinLeague, { isLoading: joining }] = useJoinLeagueMutation();
+    const { data: publicLeagues } = useGetPublicLeaguesQuery();
     const [createLeague, { isLoading: creating }] = useCreateLeagueMutation();
 
     const [code, setCode] = useState(() => getPendingInvite() ?? "");
@@ -39,7 +41,7 @@ export function LeagueOnboarding() {
         trimmed.length >= 6 ? trimmed : skipToken,
     );
 
-    const join = async (value: string) => {
+    const join = async (value: string | { leagueId: number }) => {
         try {
             const joined = await joinLeague(value).unwrap();
             clearPendingInvite();
@@ -123,6 +125,30 @@ export function LeagueOnboarding() {
                             {joining && <Loader2 size={16} className="animate-spin" />}
                             Join league
                         </Button>
+
+                        {(publicLeagues?.length ?? 0) > 0 && (
+                            <div className="flex flex-col gap-1.5 pt-1">
+                                <p className="text-sm font-semibold">Or join an open league</p>
+                                <div className="max-h-52 overflow-y-auto flex flex-col gap-1.5 -mx-1 px-1">
+                                    {publicLeagues!.filter((l) => !l.isMember).map((l) => (
+                                        <div key={l.id} className="flex items-center gap-3 rounded-xl border border-border/50 bg-background px-4 py-2.5">
+                                            <div className="shrink-0 size-8 rounded-lg bg-muted text-muted-foreground flex items-center justify-center">
+                                                <Globe size={15} />
+                                            </div>
+                                            <div className="flex-1 min-w-0">
+                                                <p className="font-semibold text-sm truncate">{l.name}</p>
+                                                <p className="text-xs text-muted-foreground">
+                                                    {l.memberCount} {l.memberCount === 1 ? "member" : "members"}
+                                                </p>
+                                            </div>
+                                            <Button size="sm" className="cursor-pointer shrink-0" disabled={busy} onClick={() => join({ leagueId: l.id })}>
+                                                Join
+                                            </Button>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
 
                         <button
                             type="button"

@@ -9,7 +9,8 @@ namespace api.Controllers;
 public record CreateLeagueDto(string Name, string? SeasonName);
 public record RenameLeagueDto(string Name);
 public record DelegateLeagueDto(int PlayerId);
-public record JoinLeagueDto(string Code);
+public record JoinLeagueDto(string? Code, int? LeagueId);
+public record LeagueVisibilityDto(bool IsPublic);
 
 [ApiController]
 [Route("api/[controller]")]
@@ -67,6 +68,47 @@ public class LeagueController(EloballContext context, ProfileResolver profiles) 
         return league == null ? NotFound("Unknown invite code.") : Ok(league);
     }
 
+    /// <summary>
+    /// Leagues that have opted into being public. This is the only listing of leagues you don't
+    /// belong to — private ones remain invisible and reachable only with their invite code.
+    /// </summary>
+    [HttpGet("public", Name = "GetPublicLeagues")]
+    public async Task<IEnumerable<object>> PublicLeagues()
+    {
+        var playerId = await CurrentPlayerId();
+
+        return await context.Leagues
+            .Where(l => l.IsPublic)
+            .OrderBy(l => l.Name)
+            .Select(l => new
+            {
+                l.Id,
+                l.Name,
+                MemberCount = l.Memberships.Count,
+                IsMember = playerId != null && l.Memberships.Any(m => m.PlayerId == playerId),
+            })
+            .ToListAsync();
+    }
+
+    /// <summary>Owner-only: open the league to anyone, or close it back to invite-only.</summary>
+    [HttpPost("{id}/visibility", Name = "SetLeagueVisibility")]
+    public async Task<ActionResult> SetVisibility(int id, [FromBody] LeagueVisibilityDto dto)
+    {
+        var playerId = await CurrentPlayerId();
+        if (playerId == null) return BadRequest("Claim a player first.");
+
+        var league = await context.Leagues.FindAsync(id);
+        if (league == null) return NotFound();
+
+        var membership = await Membership(id, playerId.Value);
+        if (membership?.Role != Owner) return BadRequest("Only the league owner can change visibility.");
+
+        league.IsPublic = dto.IsPublic;
+        league.UpdatedDateTime = DateTime.Now;
+        await context.SaveChangesAsync();
+        return Ok(new { league.Id, league.IsPublic });
+    }
+
     /// <summary>Leagues the current player belongs to (+ their role).</summary>
     [HttpGet("mine", Name = "GetMyLeagues")]
     public async Task<IEnumerable<object>> Mine()
@@ -82,6 +124,7 @@ public class LeagueController(EloballContext context, ProfileResolver profiles) 
                 Id = m.LeagueId,
                 m.League.Name,
                 m.Role,
+                m.League.IsPublic,
                 MemberCount = m.League.Memberships.Count,
                 HasOwner = m.League.Memberships.Any(x => x.Role == Owner),
             })
@@ -163,7 +206,10 @@ public class LeagueController(EloballContext context, ProfileResolver profiles) 
         return Ok(new { league.Id, league.Name });
     }
 
-    /// <summary>Join by invite code. Holding the code *is* the authorisation — there is no open join.</summary>
+    /// <summary>
+    /// Join a league, by invite code or — for a league that has opted into being public — by id.
+    /// A private league is reachable only with its code.
+    /// </summary>
     [HttpPost("join", Name = "JoinLeague")]
     public async Task<ActionResult> Join([FromBody] JoinLeagueDto dto)
     {
@@ -171,10 +217,24 @@ public class LeagueController(EloballContext context, ProfileResolver profiles) 
         if (playerId == null) return BadRequest("Claim a player first.");
 
         var code = dto.Code?.Trim();
-        if (string.IsNullOrWhiteSpace(code)) return BadRequest("Code is required.");
+        League? league;
 
-        var league = await context.Leagues.FirstOrDefaultAsync(l => l.InviteCode == code);
-        if (league == null) return NotFound("Unknown invite code.");
+        if (!string.IsNullOrWhiteSpace(code))
+        {
+            league = await context.Leagues.FirstOrDefaultAsync(l => l.InviteCode == code);
+            if (league == null) return NotFound("Unknown invite code.");
+        }
+        else if (dto.LeagueId is int leagueId)
+        {
+            // Only public leagues can be joined this way; a private id is a dead end, and says
+            // nothing about whether that league exists.
+            league = await context.Leagues.FirstOrDefaultAsync(l => l.Id == leagueId && l.IsPublic);
+            if (league == null) return NotFound("That league is not open to join.");
+        }
+        else
+        {
+            return BadRequest("Provide an invite code or a public league.");
+        }
 
         if (await Membership(league.Id, playerId.Value) != null)
             return Ok(new { league.Id, league.Name }); // idempotent
@@ -189,7 +249,10 @@ public class LeagueController(EloballContext context, ProfileResolver profiles) 
         return Ok(new { league.Id, league.Name });
     }
 
-    /// <summary>The league's current invite code, minting one on first ask. Owner only.</summary>
+    /// <summary>
+    /// The league's current invite code, minting one on first ask. Any member may share it —
+    /// bringing a colleague in shouldn't require being the owner. Rotating it stays owner-only.
+    /// </summary>
     [HttpGet("{id}/invite", Name = "GetLeagueInvite")]
     public async Task<ActionResult<object>> GetInvite(int id)
     {
@@ -199,8 +262,8 @@ public class LeagueController(EloballContext context, ProfileResolver profiles) 
         var league = await context.Leagues.FindAsync(id);
         if (league == null) return NotFound();
 
-        var membership = await Membership(id, playerId.Value);
-        if (membership?.Role != Owner) return BadRequest("Only the league owner can see the invite code.");
+        if (await Membership(id, playerId.Value) == null)
+            return Forbid();
 
         return Ok(new { code = await EnsureInviteCode(league) });
     }
