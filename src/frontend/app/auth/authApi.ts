@@ -121,3 +121,11 @@ export async function changePassword(oldPassword: string, newPassword: string): 
     const res = await post("identity/manage/info", { oldPassword, newPassword });
     if (!res.ok) throw await identityError(res, "Couldn't change your password.");
 }
+
+/** Deletes the login and profile; the player stays in past matches but leaves every league. */
+export async function deleteAccount(password: string): Promise<void> {
+    const res = await post("auth/delete-account", { password });
+    if (res.ok) return;
+    if (res.status === 400) throw new AuthError("wrong_password", "That password isn't right.");
+    throw new AuthError("error", "Couldn't delete your account. Try again in a moment.");
+}

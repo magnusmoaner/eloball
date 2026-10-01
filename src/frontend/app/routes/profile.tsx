@@ -25,6 +25,7 @@ import {
     ShieldAlert,
     ShieldCheck,
     Trash2,
+    TriangleAlert,
     UserMinus,
     Users,
 } from "lucide-react";
@@ -55,6 +56,7 @@ import { generateSeasonName } from "~/lib/seasonName";
 import { InviteDialog } from "~/components/InviteDialog";
 import { ShareAppDialog } from "~/components/ShareAppDialog";
 import { ChangePasswordDialog } from "~/components/ChangePasswordDialog";
+import { DeleteAccountDialog } from "~/components/DeleteAccountDialog";
 import { Button } from "~/components/ui/button";
 import {
     Dialog,
@@ -204,6 +206,7 @@ export default function Profile() {
     const { data: publicLeagues } = useGetPublicLeaguesQuery(undefined, { skip: !joinOpen });
     const [inviteTarget, setInviteTarget] = useState<MyLeague | null>(null);
     const [passwordOpen, setPasswordOpen] = useState(false);
+    const [deleteOpen, setDeleteOpen] = useState(false);
     const [shareOpen, setShareOpen] = useState(false);
     const [createOpen, setCreateOpen] = useState(false);
     const [newLeagueName, setNewLeagueName] = useState("");
@@ -507,11 +510,30 @@ export default function Profile() {
                         <h2 className="text-sm font-bold text-muted-foreground uppercase tracking-wide">Spread Eloball</h2>
                     </div>
                     <p className="text-sm text-muted-foreground mb-4">
-                        Know another team? Share this and they can start their own league — then you can
-                        play each other.
+                        Share a link to Eloball, and they can join and start their own league. Or
+                        share an invite to a league above instead.
                     </p>
                     <Button variant="outline" size="sm" className="cursor-pointer" onClick={() => setShareOpen(true)}>
-                        <QrCode size={14} /> Get invite QR code
+                        <QrCode size={14} /> Get QR code to share
+                    </Button>
+                </section>
+
+                <section className="bg-card rounded-2xl border border-destructive/40 p-5 animate-slide-up" style={{ animationDelay: "165ms" }}>
+                    <div className="flex items-center gap-2 mb-1">
+                        <TriangleAlert size={14} className="text-destructive" />
+                        <h2 className="text-sm font-bold text-destructive uppercase tracking-wide">Danger zone</h2>
+                    </div>
+                    <p className="text-sm text-muted-foreground mb-4">
+                        Delete your login and leave every league. Your name stays in past matches so
+                        everyone else's history still adds up.
+                    </p>
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        className="cursor-pointer bg-background text-destructive border-destructive/50 hover:bg-destructive hover:text-white"
+                        onClick={() => setDeleteOpen(true)}
+                    >
+                        <Trash2 size={14} /> Delete account
                     </Button>
                 </section>
 
@@ -528,6 +550,7 @@ export default function Profile() {
             <InviteDialog league={inviteTarget} onClose={() => setInviteTarget(null)} />
             <ChangePasswordDialog open={passwordOpen} onClose={() => setPasswordOpen(false)} />
             <ShareAppDialog open={shareOpen} onClose={() => setShareOpen(false)} />
+            <DeleteAccountDialog open={deleteOpen} onClose={() => setDeleteOpen(false)} />
 
             {/* Join with an invite code */}
             <Dialog open={joinOpen} onOpenChange={setJoinOpen}>

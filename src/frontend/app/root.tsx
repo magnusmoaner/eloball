@@ -108,12 +108,13 @@ function AppShell({children}: { children: React.ReactNode }) {
 
     // Exactly one league → open it automatically.
     useEffect(() => {
-        // Not while an invite is being redeemed — that selection wins.
-        if (redeemingInvite) return;
+        // Not while an invite is being redeemed — that selection wins. Nor once signed out: the
+        // last league list can still be cached, and would re-select a league just cleared.
+        if (redeemingInvite || !isAuthenticated) return;
         if (myLeagues && myLeagues.length === 1 && !validCurrent) {
             dispatch(setCurrentLeague(myLeagues[0].id));
         }
-    }, [myLeagues, validCurrent, dispatch, redeemingInvite]);
+    }, [myLeagues, validCurrent, dispatch, redeemingInvite, isAuthenticated]);
 
     if (isLoading) {
         return (
