@@ -1,28 +1,13 @@
 import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react'
-import type { LeaderboardEntry, LeagueMember, LeagueSummary, MyLeague, Player, PlayerMatchRecord, Season, SubmitMatch } from "./types";
+import type { LeaderboardEntry, LeagueInvite, LeagueMember, LeaguePreview, MyLeague, PublicLeague, Player, PlayerMatchRecord, Season, SubmitMatch } from "./types";
 
 const API_BASE_URL = import.meta.env.VITE_API_URL ?? 'https://api.billigeterninger.dk/api/'
 
-let getToken: (() => Promise<string>) | null = null
-
-export const setTokenGetter = (fn: (() => Promise<string>) | null) => {
-    getToken = fn
-}
-
+// Auth rides on the session cookie, so every request must carry credentials. There is no token to
+// attach and nothing to refresh — the cookie either works or the call comes back 401.
 const realBaseQuery = fetchBaseQuery({
     baseUrl: API_BASE_URL,
-    prepareHeaders: async (headers) => {
-        if (getToken) {
-            try {
-                const token = await getToken()
-                if (token)
-                    headers.set('Authorization', `Bearer ${token}`)
-            } catch (err) {
-                console.error('[prepareHeaders] token fetch failed', err)
-            }
-        }
-        return headers
-    },
+    credentials: 'include',
 })
 
 export const foosballApi = createApi({
@@ -40,15 +25,19 @@ export const foosballApi = createApi({
             query: () => 'player/me',
             providesTags: ["me"]
         }),
-        getUnclaimedPlayers: builder.query<Player[], void>({
-            query: () => 'player/unclaimed',
+        // Scoped to one league, addressed either by an invite code you hold or by a league you
+        // already belong to. There is deliberately no way to list every unclaimed player.
+        getUnclaimedPlayers: builder.query<Player[], { code: string } | { leagueId: number }>({
+            query: (arg) => 'code' in arg
+                ? `player/unclaimed?code=${encodeURIComponent(arg.code)}`
+                : `player/unclaimed?leagueId=${arg.leagueId}`,
             providesTags: ["me"]
         }),
-        claimPlayer: builder.mutation<Player, { playerId: number; email?: string }>({
+        claimPlayer: builder.mutation<Player, { playerId: number; code?: string }>({
             query: (body) => ({ url: 'player/claim', method: 'POST', body }),
             invalidatesTags: ["me", "match"]
         }),
-        createPlayer: builder.mutation<Player, { name: string; email?: string }>({
+        createPlayer: builder.mutation<Player, { name: string }>({
             query: (body) => ({ url: 'player', method: 'POST', body }),
             invalidatesTags: ["me", "match"]
         }),
@@ -109,9 +98,16 @@ export const foosballApi = createApi({
         }),
 
         // --- Leagues ---
-        getLeagues: builder.query<LeagueSummary[], void>({
-            query: () => 'league',
+        getLeaguePreview: builder.query<LeaguePreview, string>({
+            query: (code) => `league/preview?code=${encodeURIComponent(code)}`,
+        }),
+        getLeagueInvite: builder.query<LeagueInvite, number>({
+            query: (id) => `league/${id}/invite`,
             providesTags: ["league"]
+        }),
+        rotateLeagueInvite: builder.mutation<LeagueInvite, number>({
+            query: (id) => ({ url: `league/${id}/invite/rotate`, method: 'POST' }),
+            invalidatesTags: ["league"]
         }),
         getMyLeagues: builder.query<MyLeague[], void>({
             query: () => 'league/mine',
@@ -121,16 +117,29 @@ export const foosballApi = createApi({
             query: (id) => `league/${id}/members`,
             providesTags: ["league"]
         }),
-        createLeague: builder.mutation<{ id: number; name: string }, { name: string }>({
+        createLeague: builder.mutation<{ id: number; name: string; inviteCode: string }, { name: string; seasonName?: string }>({
             query: (body) => ({ url: 'league', method: 'POST', body }),
-            invalidatesTags: ["league"]
+            invalidatesTags: ["league", "season"]
         }),
         renameLeague: builder.mutation<{ id: number; name: string }, { id: number; name: string }>({
             query: ({ id, name }) => ({ url: `league/${id}`, method: 'PUT', body: { name } }),
             invalidatesTags: ["league"]
         }),
-        joinLeague: builder.mutation<void, number>({
-            query: (id) => ({ url: `league/${id}/join`, method: 'POST' }),
+        // By invite code, or by id for a league that has opted into being public.
+        joinLeague: builder.mutation<{ id: number; name: string }, string | { leagueId: number }>({
+            query: (arg) => ({
+                url: 'league/join',
+                method: 'POST',
+                body: typeof arg === 'string' ? { code: arg } : arg,
+            }),
+            invalidatesTags: ["league"]
+        }),
+        getPublicLeagues: builder.query<PublicLeague[], void>({
+            query: () => 'league/public',
+            providesTags: ["league"]
+        }),
+        setLeagueVisibility: builder.mutation<void, { id: number; isPublic: boolean }>({
+            query: ({ id, isPublic }) => ({ url: `league/${id}/visibility`, method: 'POST', body: { isPublic } }),
             invalidatesTags: ["league"]
         }),
         leaveLeague: builder.mutation<void, number>({
@@ -172,12 +181,16 @@ export const {
     useGetPlayerMatchesQuery,
     useEndSeasonMutation,
     useCreateSeasonMutation,
-    useGetLeaguesQuery,
+    useGetLeaguePreviewQuery,
+    useGetLeagueInviteQuery,
+    useRotateLeagueInviteMutation,
     useGetMyLeaguesQuery,
     useGetLeagueMembersQuery,
     useCreateLeagueMutation,
     useRenameLeagueMutation,
     useJoinLeagueMutation,
+    useGetPublicLeaguesQuery,
+    useSetLeagueVisibilityMutation,
     useLeaveLeagueMutation,
     useClaimOwnershipMutation,
     useDelegateOwnershipMutation,

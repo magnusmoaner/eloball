@@ -1,41 +1,84 @@
-using System.Security.Claims;
+using api.Auth;
 using api.Database;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
 namespace api.Controllers;
 
-public record CreateLeagueDto(string Name);
+public record CreateLeagueDto(string Name, string? SeasonName);
 public record RenameLeagueDto(string Name);
 public record DelegateLeagueDto(int PlayerId);
+public record JoinLeagueDto(string? Code, int? LeagueId);
+public record LeagueVisibilityDto(bool IsPublic);
 
 [ApiController]
 [Route("api/[controller]")]
-public class LeagueController(EloballContext context) : ControllerBase
+public class LeagueController(EloballContext context, ProfileResolver profiles) : ControllerBase
 {
     private const string Owner = "Owner";
     private const string Member = "Member";
 
-    private string CurrentSub =>
-        User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-        ?? User.FindFirst("sub")?.Value
-        ?? throw new InvalidOperationException("No subject claim on the token.");
+    private Task<int?> CurrentPlayerId() => profiles.CurrentPlayerIdAsync(User);
 
-    private async Task<int?> CurrentPlayerId()
+    /// <summary>Short, unambiguous invite code — no 0/O/1/I, so it survives being read off a QR-less printout.</summary>
+    private static string NewInviteCode()
     {
-        var profile = await context.UserProfiles.FirstOrDefaultAsync(u => u.Auth0Sub == CurrentSub);
-        return profile?.PlayerId;
+        const string alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+        var chars = new char[8];
+        var bytes = System.Security.Cryptography.RandomNumberGenerator.GetBytes(8);
+        for (var i = 0; i < chars.Length; i++)
+            chars[i] = alphabet[bytes[i] % alphabet.Length];
+        return new string(chars);
+    }
+
+    private async Task<string> EnsureInviteCode(League league)
+    {
+        if (!string.IsNullOrEmpty(league.InviteCode))
+            return league.InviteCode;
+
+        league.InviteCode = NewInviteCode();
+        league.UpdatedDateTime = DateTime.Now;
+        await context.SaveChangesAsync();
+        return league.InviteCode;
     }
 
     private Task<LeagueMembership?> Membership(int leagueId, int playerId) =>
         context.LeagueMemberships.FirstOrDefaultAsync(m => m.LeagueId == leagueId && m.PlayerId == playerId);
 
-    /// <summary>All leagues (for browse/join).</summary>
-    [HttpGet]
-    public async Task<IEnumerable<object>> Get()
+    /// <summary>
+    /// What an invite code points at, so someone can see which league they're about to join.
+    /// Deliberately the only way to look a league up you don't belong to — there is no browse.
+    /// </summary>
+    /// <remarks>
+    /// Anonymous: the invite card has to name the league before you have an account, and holding
+    /// an unguessable code is the whole authorisation. Nothing else here is readable without one.
+    /// </remarks>
+    [AllowAnonymous]
+    [HttpGet("preview", Name = "PreviewLeague")]
+    public async Task<ActionResult<object>> Preview([FromQuery] string code)
+    {
+        if (string.IsNullOrWhiteSpace(code)) return BadRequest("Code is required.");
+
+        var league = await context.Leagues
+            .Where(l => l.InviteCode == code)
+            .Select(l => new { l.Id, l.Name, MemberCount = l.Memberships.Count })
+            .FirstOrDefaultAsync();
+
+        return league == null ? NotFound("Unknown invite code.") : Ok(league);
+    }
+
+    /// <summary>
+    /// Leagues that have opted into being public. This is the only listing of leagues you don't
+    /// belong to — private ones remain invisible and reachable only with their invite code.
+    /// </summary>
+    [HttpGet("public", Name = "GetPublicLeagues")]
+    public async Task<IEnumerable<object>> PublicLeagues()
     {
         var playerId = await CurrentPlayerId();
+
         return await context.Leagues
+            .Where(l => l.IsPublic)
             .OrderBy(l => l.Name)
             .Select(l => new
             {
@@ -43,9 +86,27 @@ public class LeagueController(EloballContext context) : ControllerBase
                 l.Name,
                 MemberCount = l.Memberships.Count,
                 IsMember = playerId != null && l.Memberships.Any(m => m.PlayerId == playerId),
-                HasOwner = l.Memberships.Any(m => m.Role == Owner),
             })
             .ToListAsync();
+    }
+
+    /// <summary>Owner-only: open the league to anyone, or close it back to invite-only.</summary>
+    [HttpPost("{id}/visibility", Name = "SetLeagueVisibility")]
+    public async Task<ActionResult> SetVisibility(int id, [FromBody] LeagueVisibilityDto dto)
+    {
+        var playerId = await CurrentPlayerId();
+        if (playerId == null) return BadRequest("Claim a player first.");
+
+        var league = await context.Leagues.FindAsync(id);
+        if (league == null) return NotFound();
+
+        var membership = await Membership(id, playerId.Value);
+        if (membership?.Role != Owner) return BadRequest("Only the league owner can change visibility.");
+
+        league.IsPublic = dto.IsPublic;
+        league.UpdatedDateTime = DateTime.Now;
+        await context.SaveChangesAsync();
+        return Ok(new { league.Id, league.IsPublic });
     }
 
     /// <summary>Leagues the current player belongs to (+ their role).</summary>
@@ -63,6 +124,7 @@ public class LeagueController(EloballContext context) : ControllerBase
                 Id = m.LeagueId,
                 m.League.Name,
                 m.Role,
+                m.League.IsPublic,
                 MemberCount = m.League.Memberships.Count,
                 HasOwner = m.League.Memberships.Any(x => x.Role == Owner),
             })
@@ -71,8 +133,10 @@ public class LeagueController(EloballContext context) : ControllerBase
 
     /// <summary>Members of a league (player id + name + role) — for owner management UI.</summary>
     [HttpGet("{id}/members", Name = "GetLeagueMembers")]
-    public async Task<IEnumerable<object>> Members(int id)
+    public async Task<ActionResult<IEnumerable<object>>> Members(int id)
     {
+        if (!await profiles.IsMemberAsync(User, id)) return Forbid();
+
         return await context.LeagueMemberships
             .Where(m => m.LeagueId == id)
             .OrderByDescending(m => m.Role == Owner)
@@ -100,9 +164,25 @@ public class LeagueController(EloballContext context) : ControllerBase
             PlayerId = playerId.Value,
             Role = Owner,
         });
-        await context.SaveChangesAsync();
 
-        return Ok(new { league.Id, league.Name });
+        // Open the first season in the same call. A league without one can't record a match, so
+        // leaving it to a second request just risks a dead-end league if that request never comes.
+        var seasonName = dto.SeasonName?.Trim();
+        if (!string.IsNullOrWhiteSpace(seasonName))
+        {
+            context.Seasons.Add(new Season
+            {
+                Name = seasonName,
+                StartDate = DateTime.Now,
+                IsActive = true,
+                CreatedAt = DateTime.Now,
+                LeagueId = league.Id,
+            });
+        }
+
+        await EnsureInviteCode(league);
+
+        return Ok(new { league.Id, league.Name, league.InviteCode });
     }
 
     [HttpPut("{id}", Name = "RenameLeague")]
@@ -126,18 +206,85 @@ public class LeagueController(EloballContext context) : ControllerBase
         return Ok(new { league.Id, league.Name });
     }
 
-    [HttpPost("{id}/join")]
-    public async Task<ActionResult> Join(int id)
+    /// <summary>
+    /// Join a league, by invite code or — for a league that has opted into being public — by id.
+    /// A private league is reachable only with its code.
+    /// </summary>
+    [HttpPost("join", Name = "JoinLeague")]
+    public async Task<ActionResult> Join([FromBody] JoinLeagueDto dto)
     {
         var playerId = await CurrentPlayerId();
         if (playerId == null) return BadRequest("Claim a player first.");
 
-        if (!await context.Leagues.AnyAsync(l => l.Id == id)) return NotFound();
-        if (await Membership(id, playerId.Value) != null) return Ok(); // idempotent
+        var code = dto.Code?.Trim();
+        League? league;
 
-        context.LeagueMemberships.Add(new LeagueMembership { LeagueId = id, PlayerId = playerId.Value, Role = Member });
+        if (!string.IsNullOrWhiteSpace(code))
+        {
+            league = await context.Leagues.FirstOrDefaultAsync(l => l.InviteCode == code);
+            if (league == null) return NotFound("Unknown invite code.");
+        }
+        else if (dto.LeagueId is int leagueId)
+        {
+            // Only public leagues can be joined this way; a private id is a dead end, and says
+            // nothing about whether that league exists.
+            league = await context.Leagues.FirstOrDefaultAsync(l => l.Id == leagueId && l.IsPublic);
+            if (league == null) return NotFound("That league is not open to join.");
+        }
+        else
+        {
+            return BadRequest("Provide an invite code or a public league.");
+        }
+
+        if (await Membership(league.Id, playerId.Value) != null)
+            return Ok(new { league.Id, league.Name }); // idempotent
+
+        context.LeagueMemberships.Add(new LeagueMembership
+        {
+            LeagueId = league.Id,
+            PlayerId = playerId.Value,
+            Role = Member,
+        });
         await context.SaveChangesAsync();
-        return Ok();
+        return Ok(new { league.Id, league.Name });
+    }
+
+    /// <summary>
+    /// The league's current invite code, minting one on first ask. Any member may share it —
+    /// bringing a colleague in shouldn't require being the owner. Rotating it stays owner-only.
+    /// </summary>
+    [HttpGet("{id}/invite", Name = "GetLeagueInvite")]
+    public async Task<ActionResult<object>> GetInvite(int id)
+    {
+        var playerId = await CurrentPlayerId();
+        if (playerId == null) return BadRequest("Claim a player first.");
+
+        var league = await context.Leagues.FindAsync(id);
+        if (league == null) return NotFound();
+
+        if (await Membership(id, playerId.Value) == null)
+            return Forbid();
+
+        return Ok(new { code = await EnsureInviteCode(league) });
+    }
+
+    /// <summary>Replace the invite code, invalidating every link and printout in circulation.</summary>
+    [HttpPost("{id}/invite/rotate", Name = "RotateLeagueInvite")]
+    public async Task<ActionResult<object>> RotateInvite(int id)
+    {
+        var playerId = await CurrentPlayerId();
+        if (playerId == null) return BadRequest("Claim a player first.");
+
+        var league = await context.Leagues.FindAsync(id);
+        if (league == null) return NotFound();
+
+        var membership = await Membership(id, playerId.Value);
+        if (membership?.Role != Owner) return BadRequest("Only the league owner can rotate the invite code.");
+
+        league.InviteCode = NewInviteCode();
+        league.UpdatedDateTime = DateTime.Now;
+        await context.SaveChangesAsync();
+        return Ok(new { code = league.InviteCode });
     }
 
     [HttpPost("{id}/leave")]

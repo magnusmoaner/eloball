@@ -63,6 +63,23 @@ export interface LeaderboardEntry {
 
 export type LeagueRole = "Owner" | "Member";
 
+export interface LeaguePreview {
+    id: number;
+    name: string;
+    memberCount: number;
+}
+
+export interface PublicLeague {
+    id: number;
+    name: string;
+    memberCount: number;
+    isMember: boolean;
+}
+
+export interface LeagueInvite {
+    code: string;
+}
+
 export interface LeagueSummary {
     id: number;
     name: string;
@@ -77,6 +94,7 @@ export interface MyLeague {
     role: LeagueRole;
     memberCount: number;
     hasOwner: boolean;
+    isPublic: boolean;
 }
 
 export interface LeagueMember {

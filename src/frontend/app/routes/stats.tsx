@@ -6,7 +6,7 @@ import type { PlayerMatchRecord } from "../../apis/foosball/types";
 import { useCurrentLeague } from "~/lib/useCurrentLeague";
 import { CurrentLeagueBadge } from "~/components/CurrentLeagueBadge";
 import { buildMatchesFromRecords, computePlayerStats, classifyRank, PLACEMENT_GAMES, type PlayerStats, type RankStatus } from "~/lib/playerStats";
-import { Gamepad2, Trophy, Swords, Users, Flame, Target, Shield, Heart, TrendingUp, Calendar, Egg } from "lucide-react";
+import { Gamepad2, Trophy, Swords, Users, Flame, Target, Shield, Heart, TrendingUp, Calendar, Egg, EggFried } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 
 export function meta() {
@@ -214,10 +214,10 @@ function PlayerDetail({ stats, winRateData, status, recentMatches }: { stats: Pl
         )}
         {stats.eggsGiven > 0 && (
           <StatRow
-            icon={Egg}
+            icon={EggFried}
             iconColor="text-amber-500"
             label="Eggs delivered"
-            value={`🥚 ${stats.eggsGiven}`}
+            value={`🍳 ${stats.eggsGiven}`}
             sub="10-0 shutouts won"
           />
         )}
@@ -343,7 +343,9 @@ function PlayerDetail({ stats, winRateData, status, recentMatches }: { stats: Pl
                         <span className="text-muted-foreground">w/ {m.teammates.join(" & ")} </span>
                       )}
                       <span className="text-muted-foreground">vs</span> {m.opponents.join(" & ")}
-                      {m.egg && <span className="ml-1" title="Egg — 10-0 shutout">🥚</span>}
+                      {m.egg && (m.won
+                        ? <span className="ml-1" title="You cooked one — 10-0 shutout">🍳</span>
+                        : <span className="ml-1" title="You got egged — 10-0 shutout">🥚</span>)}
                     </p>
                   </div>
                   <span className="text-xs text-muted-foreground shrink-0 tabular-nums">
@@ -557,10 +559,10 @@ export default function Stats() {
         )}
         {eggKing && (
           <HighlightCard
-            icon={Egg}
+            icon={EggFried}
             label="Egg King"
             value={eggKing.name}
-            sub={`🥚 ${eggKing.eggsGiven} shutout${eggKing.eggsGiven === 1 ? "" : "s"} delivered`}
+            sub={`🍳 ${eggKing.eggsGiven} shutout${eggKing.eggsGiven === 1 ? "" : "s"} delivered`}
             color="bg-amber-500"
             delay={240}
           />

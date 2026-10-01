@@ -1,33 +1,31 @@
 using api;
+using api.Auth;
 using api.Database;
-using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.AspNetCore.Authorization;
+using api.Services;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Configuration;
-using Microsoft.IdentityModel.Tokens;
-
-var allowAllOrigins = "_allowAllOrigins";
+using Resend;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add diagnostic logging
-Console.WriteLine($"Current directory: {Directory.GetCurrentDirectory()}");
-Console.WriteLine($"Configuration base path: {builder.Environment.ContentRootPath}");
-Console.WriteLine(
-    $"Looking for appsettings.json in: {Path.Combine(builder.Environment.ContentRootPath, "appsettings.json")}");
+var frontendBaseUrl = builder.Configuration["Frontend:BaseUrl"]
+    ?? throw new InvalidOperationException("Frontend:BaseUrl is not configured.");
+var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
+    ?? [frontendBaseUrl];
 
+// The session cookie is cross-origin (SPA and API are different subdomains), so the browser only
+// sends it when the origin is named explicitly — AllowAnyOrigin and AllowCredentials are mutually
+// exclusive.
+const string corsPolicy = "_spa";
 builder.Services.AddCors(options =>
 {
-    options.AddPolicy(name: allowAllOrigins,
-        policy =>
-        {
-            policy.AllowAnyOrigin();
-            policy.AllowAnyHeader();
-            policy.AllowAnyMethod();
-        });
+    options.AddPolicy(corsPolicy, policy => policy
+        .WithOrigins(allowedOrigins)
+        .AllowAnyHeader()
+        .AllowAnyMethod()
+        .AllowCredentials());
 });
 
-// Add services to the container.
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
     {
@@ -35,41 +33,72 @@ builder.Services.AddControllers()
     });
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+builder.Services.AddScoped<ProfileResolver>();
 builder.Services.AddDbContext<EloballContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
 
-var auth0Domain = builder.Configuration["Auth0:Domain"]
-    ?? throw new InvalidOperationException("Auth0:Domain is not configured.");
-var auth0Audience = builder.Configuration["Auth0:Audience"]
-    ?? throw new InvalidOperationException("Auth0:Audience is not configured.");
-var auth0AttributeClaim = builder.Configuration["Auth0:AttributeClaim"]
-    ?? throw new InvalidOperationException("Auth0:AttributeClaim is not configured.");
-var auth0RequiredAttribute = builder.Configuration["Auth0:RequiredAttribute"]
-    ?? throw new InvalidOperationException("Auth0:RequiredAttribute is not configured.");
-
-builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer(options =>
-    {
-        options.Authority = $"https://{auth0Domain}/";
-        options.Audience = auth0Audience;
-        options.TokenValidationParameters = new TokenValidationParameters
-        {
-            ValidateIssuer = true,
-            ValidIssuer = $"https://{auth0Domain}/",
-            ValidateAudience = true,
-            ValidAudience = auth0Audience,
-            ValidateLifetime = true,
-            NameClaimType = "sub"
-        };
-    });
-
-builder.Services.AddAuthorization(options =>
+// Email via Resend. Key comes from user-secrets locally and App Service settings (Resend__ApiKey) in prod.
+builder.Services.Configure<EmailOptions>(builder.Configuration.GetSection(EmailOptions.Section));
+var resendApiKey = builder.Configuration["Resend:ApiKey"];
+if (string.IsNullOrWhiteSpace(resendApiKey))
 {
-    options.FallbackPolicy = new AuthorizationPolicyBuilder()
-        .RequireAuthenticatedUser()
-        .RequireClaim(auth0AttributeClaim, auth0RequiredAttribute)
-        .Build();
+    if (!builder.Environment.IsDevelopment())
+        throw new InvalidOperationException("Resend:ApiKey is not configured.");
+    builder.Services.AddSingleton<IEmailSender, NoOpEmailSender>();
+}
+else
+{
+    builder.Services.AddOptions();
+    builder.Services.Configure<ResendClientOptions>(o => o.ApiToken = resendApiKey);
+    builder.Services.AddHttpClient<IResend, ResendClient>();
+    builder.Services.AddScoped<IEmailSender, ResendEmailSender>();
+}
+
+// Sign-up requires a confirmed address. Config is the emergency lever if mail delivery breaks.
+var requireConfirmedEmail = builder.Configuration.GetValue("Auth:RequireConfirmedEmail", true);
+
+builder.Services.AddIdentityApiEndpoints<AppUser>(options =>
+    {
+        options.Password.RequiredLength = 8;
+        options.Password.RequireDigit = false;
+        options.Password.RequireLowercase = false;
+        options.Password.RequireUppercase = false;
+        options.Password.RequireNonAlphanumeric = false;
+
+        // An address maps to exactly one account — this is what makes re-linking an old Auth0
+        // profile by email safe.
+        options.User.RequireUniqueEmail = true;
+        options.SignIn.RequireConfirmedEmail = requireConfirmedEmail;
+    })
+    .AddEntityFrameworkStores<EloballContext>();
+
+// Registered after AddIdentityApiEndpoints so it wins over Identity's built-in no-op sender.
+// Note the generic IEmailSender<AppUser>: the non-generic one is a different interface and
+// registering that instead is the usual reason no mail goes out, silently.
+builder.Services.AddTransient<IEmailSender<AppUser>, IdentityEmailSender>();
+
+builder.Services.ConfigureApplicationCookie(options =>
+{
+    options.Cookie.SameSite = SameSiteMode.Lax;
+    options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+    options.Cookie.HttpOnly = true;
+    options.ExpireTimeSpan = TimeSpan.FromDays(30);
+    options.SlidingExpiration = true;
+
+    // This is an API: answer unauthenticated calls with a status code, never a login redirect.
+    options.Events.OnRedirectToLogin = ctx =>
+    {
+        ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
+        return Task.CompletedTask;
+    };
+    options.Events.OnRedirectToAccessDenied = ctx =>
+    {
+        ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
+        return Task.CompletedTask;
+    };
 });
+
+builder.Services.AddAuthorization();
 
 var app = builder.Build();
 
@@ -94,10 +123,18 @@ if (!app.Environment.IsDevelopment())
 {
     app.UseHttpsRedirection();
 }
-app.UseCors(allowAllOrigins);
+app.UseCors(corsPolicy);
 app.UseAuthentication();
 app.UseAuthorization();
 
-app.MapControllers();
+// register / confirmEmail / resendConfirmationEmail / forgotPassword / resetPassword / manage.
+// Login, logout and who-am-I are ours (see AuthController) — Identity's own /login returns bearer
+// tokens unless coaxed with ?useCookies, and its /manage/info knows nothing about players.
+app.MapGroup("/api/identity").MapIdentityApi<AppUser>();
+
+// Every controller action needs a signed-in user unless it says [AllowAnonymous] (Health, and
+// AuthController.Login). Applied here rather than as a global FallbackPolicy because a fallback
+// also swallows Identity's own /register and /forgotPassword, which carry no auth metadata.
+app.MapControllers().RequireAuthorization();
 
 app.Run();

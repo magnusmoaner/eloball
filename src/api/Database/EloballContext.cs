@@ -1,10 +1,11 @@
 ﻿using System;
 using System.Collections.Generic;
+using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 
 namespace api.Database;
 
-public partial class EloballContext : DbContext
+public partial class EloballContext : IdentityUserContext<AppUser>
 {
     public EloballContext()
     {
@@ -37,6 +38,8 @@ public partial class EloballContext : DbContext
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        base.OnModelCreating(modelBuilder);
+
         modelBuilder.Entity<Match>(entity =>
         {
             entity.ToTable("match");
@@ -202,19 +205,31 @@ public partial class EloballContext : DbContext
                 .HasConstraintName("FK_leagueMembership_player");
         });
 
+        modelBuilder.Entity<League>(entity =>
+        {
+            entity.Property(e => e.InviteCode).HasMaxLength(16).HasColumnName("inviteCode");
+            entity.Property(e => e.IsPublic).HasColumnName("isPublic");
+            entity.HasIndex(e => e.InviteCode, "UX_league_inviteCode")
+                .IsUnique()
+                .HasFilter("[inviteCode] IS NOT NULL");
+        });
+
         modelBuilder.Entity<UserProfile>(entity =>
         {
             entity.HasKey(e => e.Id).HasName("PK_userProfile");
 
             entity.ToTable("userProfile");
 
-            entity.HasIndex(e => e.Auth0Sub, "UQ_userProfile_auth0Sub").IsUnique();
+            entity.HasIndex(e => e.IdentityUserId, "UX_userProfile_identityUserId")
+                .IsUnique()
+                .HasFilter("[identityUserId] IS NOT NULL");
             entity.HasIndex(e => e.PlayerId, "UX_userProfile_playerId")
                 .IsUnique()
                 .HasFilter("[playerId] IS NOT NULL");
 
             entity.Property(e => e.Id).HasColumnName("id");
             entity.Property(e => e.Auth0Sub).HasMaxLength(255).HasColumnName("auth0Sub");
+            entity.Property(e => e.IdentityUserId).HasMaxLength(450).HasColumnName("identityUserId");
             entity.Property(e => e.Email).HasMaxLength(320).HasColumnName("email");
             entity.Property(e => e.PlayerId).HasColumnName("playerId");
             entity.Property(e => e.CreatedDateTime)

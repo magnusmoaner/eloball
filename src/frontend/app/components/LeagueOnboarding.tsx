@@ -1,43 +1,54 @@
-import { useMemo, useState } from "react";
-import { useAuth0 } from "@auth0/auth0-react";
+import { useState } from "react";
 import { useDispatch } from "react-redux";
 import { toast } from "~/lib/toast";
-import { Dices, Loader2, LogOut, Search, Shield, UserPlus, Users } from "lucide-react";
+import { Dices, Globe, Loader2, LogOut, Ticket, UserPlus, Users } from "lucide-react";
+import { skipToken } from "@reduxjs/toolkit/query";
 import {
-    useGetLeaguesQuery,
+    useGetLeaguePreviewQuery,
+    useGetPublicLeaguesQuery,
     useJoinLeagueMutation,
     useCreateLeagueMutation,
 } from "../../apis/foosball/foosball";
 import { setCurrentLeague } from "~/leagueSlice";
 import { randomLeagueName } from "~/lib/leagueName";
+import { generateSeasonName } from "~/lib/seasonName";
 import { Button } from "~/components/ui/button";
+import { useAuth } from "~/auth/AuthProvider";
+import { clearPendingInvite, getPendingInvite } from "~/lib/pendingInvite";
 
+/**
+ * The hard gate between signing up and using the app: you are in a league or you are nowhere.
+ * Two ways through — redeem an invite code, or start your own league and become its owner.
+ * There is no browsing, because there is no endpoint that lists other people's leagues.
+ */
 export function LeagueOnboarding() {
-    const { logout } = useAuth0();
+    const { logout } = useAuth();
     const dispatch = useDispatch();
-    const { data: leagues, isLoading } = useGetLeaguesQuery();
     const [joinLeague, { isLoading: joining }] = useJoinLeagueMutation();
+    const { data: publicLeagues } = useGetPublicLeaguesQuery();
     const [createLeague, { isLoading: creating }] = useCreateLeagueMutation();
 
-    const [query, setQuery] = useState("");
+    const [code, setCode] = useState(() => getPendingInvite() ?? "");
     const [showCreate, setShowCreate] = useState(false);
     const [newName, setNewName] = useState("");
+    const [seasonName, setSeasonName] = useState(() => generateSeasonName());
 
     const busy = joining || creating;
 
-    const filtered = useMemo(() => {
-        const q = query.trim().toLowerCase();
-        const list = leagues ?? [];
-        return q ? list.filter((l) => l.name.toLowerCase().includes(q)) : list;
-    }, [leagues, query]);
+    // Show which league a code belongs to before committing to it.
+    const trimmed = code.trim().toUpperCase();
+    const { data: preview, isFetching: previewing } = useGetLeaguePreviewQuery(
+        trimmed.length >= 6 ? trimmed : skipToken,
+    );
 
-    const handleJoin = async (id: number, name: string) => {
+    const join = async (value: string | { leagueId: number }) => {
         try {
-            await joinLeague(id).unwrap();
-            dispatch(setCurrentLeague(id));
-            toast.success(`Joined ${name}`);
+            const joined = await joinLeague(value).unwrap();
+            clearPendingInvite();
+            dispatch(setCurrentLeague(joined.id));
+            toast.success(`Joined ${joined.name}`);
         } catch {
-            toast.error("Couldn't join that league.");
+            toast.error("That invite code isn't valid.");
         }
     };
 
@@ -45,7 +56,8 @@ export function LeagueOnboarding() {
         const name = newName.trim();
         if (!name) return;
         try {
-            const created = await createLeague({ name }).unwrap();
+            const created = await createLeague({ name, seasonName: seasonName.trim() || undefined }).unwrap();
+            clearPendingInvite();
             dispatch(setCurrentLeague(created.id));
             toast.success(`Created ${created.name}`);
         } catch {
@@ -65,71 +77,88 @@ export function LeagueOnboarding() {
                     <p className="text-sm text-muted-foreground max-w-xs">
                         {showCreate
                             ? "You'll be the owner. Seasons and matches live inside your league."
-                            : "Pick a league to play in, or start your own."}
+                            : "Enter the invite code from your league, or start your own."}
                     </p>
                 </div>
 
                 {!showCreate ? (
-                    <>
-                        {(leagues?.length ?? 0) > 6 && (
-                            <div className="relative">
-                                <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                                <input
-                                    value={query}
-                                    onChange={(e) => setQuery(e.target.value)}
-                                    placeholder="Search leagues…"
-                                    className="w-full pl-9 pr-3 py-2 rounded-xl bg-background border border-border text-sm outline-none focus:border-primary"
-                                />
+                    <div className="flex flex-col gap-3">
+                        <label className="text-sm font-semibold">Invite code</label>
+                        <div className="relative">
+                            <Ticket size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                            <input
+                                value={code}
+                                onChange={(e) => setCode(e.target.value.toUpperCase())}
+                                placeholder="ABCD1234"
+                                autoFocus
+                                autoCapitalize="characters"
+                                spellCheck={false}
+                                className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-background border border-border text-sm font-mono tracking-widest outline-none focus:border-primary"
+                            />
+                        </div>
+
+                        {previewing && (
+                            <p className="text-sm text-muted-foreground flex items-center gap-2">
+                                <Loader2 size={14} className="animate-spin" /> Looking up that code…
+                            </p>
+                        )}
+
+                        {preview && (
+                            <div className="flex items-center gap-3 rounded-xl border border-border/50 bg-background px-4 py-3">
+                                <div className="shrink-0 size-9 rounded-lg bg-muted text-muted-foreground flex items-center justify-center">
+                                    <Users size={18} />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                    <p className="font-semibold text-sm truncate">{preview.name}</p>
+                                    <p className="text-xs text-muted-foreground">
+                                        {preview.memberCount} {preview.memberCount === 1 ? "member" : "members"}
+                                    </p>
+                                </div>
                             </div>
                         )}
 
-                        <div className="max-h-[44vh] overflow-y-auto -mx-1 px-1 flex flex-col gap-1.5">
-                            {isLoading ? (
-                                <div className="flex justify-center py-8">
-                                    <Loader2 size={24} className="animate-spin text-muted-foreground" />
+                        <Button
+                            className="w-full cursor-pointer"
+                            disabled={!preview || busy}
+                            onClick={() => join(trimmed)}
+                        >
+                            {joining && <Loader2 size={16} className="animate-spin" />}
+                            Join league
+                        </Button>
+
+                        {(publicLeagues?.length ?? 0) > 0 && (
+                            <div className="flex flex-col gap-1.5 pt-1">
+                                <p className="text-sm font-semibold">Or join an open league</p>
+                                <div className="max-h-52 overflow-y-auto flex flex-col gap-1.5 -mx-1 px-1">
+                                    {publicLeagues!.filter((l) => !l.isMember).map((l) => (
+                                        <div key={l.id} className="flex items-center gap-3 rounded-xl border border-border/50 bg-background px-4 py-2.5">
+                                            <div className="shrink-0 size-8 rounded-lg bg-muted text-muted-foreground flex items-center justify-center">
+                                                <Globe size={15} />
+                                            </div>
+                                            <div className="flex-1 min-w-0">
+                                                <p className="font-semibold text-sm truncate">{l.name}</p>
+                                                <p className="text-xs text-muted-foreground">
+                                                    {l.memberCount} {l.memberCount === 1 ? "member" : "members"}
+                                                </p>
+                                            </div>
+                                            <Button size="sm" className="cursor-pointer shrink-0" disabled={busy} onClick={() => join({ leagueId: l.id })}>
+                                                Join
+                                            </Button>
+                                        </div>
+                                    ))}
                                 </div>
-                            ) : filtered.length === 0 ? (
-                                <p className="text-sm text-muted-foreground text-center py-6">
-                                    {leagues?.length === 0 ? "No leagues yet — create the first one." : "No leagues match your search."}
-                                </p>
-                            ) : (
-                                filtered.map((l) => (
-                                    <div
-                                        key={l.id}
-                                        className="flex items-center gap-3 rounded-xl border border-border/50 bg-background px-4 py-3"
-                                    >
-                                        <div className="shrink-0 size-9 rounded-lg bg-muted text-muted-foreground flex items-center justify-center">
-                                            <Shield size={18} />
-                                        </div>
-                                        <div className="flex-1 min-w-0">
-                                            <p className="font-semibold text-sm truncate">{l.name}</p>
-                                            <p className="text-xs text-muted-foreground flex items-center gap-1">
-                                                <Users size={11} />
-                                                {l.memberCount} {l.memberCount === 1 ? "member" : "members"}
-                                            </p>
-                                        </div>
-                                        <Button
-                                            size="sm"
-                                            className="cursor-pointer shrink-0"
-                                            disabled={busy}
-                                            onClick={() => handleJoin(l.id, l.name)}
-                                        >
-                                            Join
-                                        </Button>
-                                    </div>
-                                ))
-                            )}
-                        </div>
+                            </div>
+                        )}
 
                         <button
                             type="button"
-                            onClick={() => { if (!newName.trim()) setNewName(randomLeagueName()); setShowCreate(true); }}
+                            onClick={() => { if (!newName.trim()) setNewName(randomLeagueName()); setSeasonName(generateSeasonName()); setShowCreate(true); }}
                             className="text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer inline-flex items-center justify-center gap-1.5"
                         >
                             <UserPlus size={14} />
-                            Create your own league
+                            No code? Create your own league
                         </button>
-                    </>
+                    </div>
                 ) : (
                     <div className="flex flex-col gap-3">
                         <label className="text-sm font-semibold">League name</label>
@@ -150,6 +179,27 @@ export function LeagueOnboarding() {
                                 <Dices size={18} />
                             </button>
                         </div>
+                        <label className="text-sm font-semibold mt-1">First season</label>
+                        <div className="relative">
+                            <input
+                                value={seasonName}
+                                onChange={(e) => setSeasonName(e.target.value)}
+                                placeholder="e.g. Season 1"
+                                className="w-full pl-3 pr-11 py-2.5 rounded-xl bg-background border border-border text-sm outline-none focus:border-primary"
+                            />
+                            <button
+                                type="button"
+                                onClick={() => setSeasonName(generateSeasonName())}
+                                title="Surprise me"
+                                className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
+                            >
+                                <Dices size={18} />
+                            </button>
+                        </div>
+                        <p className="text-xs text-muted-foreground -mt-1">
+                            Matches are recorded against a season, so we'll start one for you.
+                        </p>
+
                         <Button className="w-full cursor-pointer" disabled={!newName.trim() || busy} onClick={handleCreate}>
                             {creating && <Loader2 size={16} className="animate-spin" />}
                             Create league
@@ -159,14 +209,14 @@ export function LeagueOnboarding() {
                             onClick={() => setShowCreate(false)}
                             className="text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
                         >
-                            ← Back to joining
+                            ← I have an invite code
                         </button>
                     </div>
                 )}
             </div>
 
             <button
-                onClick={() => logout({ logoutParams: { returnTo: window.location.origin } })}
+                onClick={() => { void logout(); }}
                 className="mt-6 inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
             >
                 <LogOut size={15} />

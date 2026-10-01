@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { useAuth0 } from "@auth0/auth0-react";
+import { useAuth } from "~/auth/AuthProvider";
+import { getPendingInvite } from "~/lib/pendingInvite";
 import { toast } from "~/lib/toast";
 import { Check, Loader2, LogOut, Search, UserPlus } from "lucide-react";
 import {
@@ -7,20 +8,27 @@ import {
     useClaimPlayerMutation,
     useCreatePlayerMutation,
 } from "../../apis/foosball/foosball";
+import { skipToken } from "@reduxjs/toolkit/query";
 import { Button } from "~/components/ui/button";
 
 export function Onboarding() {
-    const { user, logout } = useAuth0();
-    const { data: players, isLoading } = useGetUnclaimedPlayersQuery();
+    const { user, logout, refresh } = useAuth();
+
+    // Only an invite code opens up a league roster to claim from. Without one there is nobody to
+    // be yet, so the screen goes straight to creating a player.
+    const invite = getPendingInvite();
+    const { data: players, isLoading } = useGetUnclaimedPlayersQuery(
+        invite ? { code: invite } : skipToken,
+    );
     const [claimPlayer, { isLoading: claiming }] = useClaimPlayerMutation();
     const [createPlayer, { isLoading: creating }] = useCreatePlayerMutation();
 
     const [selectedId, setSelectedId] = useState<number | null>(null);
     const [query, setQuery] = useState("");
     const [showCreate, setShowCreate] = useState(false);
-    const [newName, setNewName] = useState(user?.name ?? user?.nickname ?? "");
+    const [newName, setNewName] = useState("");
 
-    const noPlayersToClaim = !isLoading && (players?.length ?? 0) === 0;
+    const noPlayersToClaim = !invite || (!isLoading && (players?.length ?? 0) === 0);
 
     // Nothing to claim → go straight to creating a player.
     useEffect(() => {
@@ -40,9 +48,9 @@ export function Onboarding() {
     const handleClaim = async () => {
         if (!selected) return;
         try {
-            await claimPlayer({ playerId: selected.id, email: user?.email }).unwrap();
+            await claimPlayer({ playerId: selected.id, code: invite ?? undefined }).unwrap();
+            await refresh();
             toast.success(`You're now playing as ${selected.name}`);
-            // "me" tag invalidates → the app shell re-renders into the app.
         } catch {
             toast.error("Couldn't claim that player — it may have just been taken.");
             setSelectedId(null);
@@ -53,7 +61,8 @@ export function Onboarding() {
         const name = newName.trim();
         if (!name) return;
         try {
-            await createPlayer({ name, email: user?.email }).unwrap();
+            await createPlayer({ name }).unwrap();
+            await refresh();
             toast.success(`Created your player ${name}`);
         } catch {
             toast.error("Couldn't create your player. Try again.");
@@ -170,7 +179,7 @@ export function Onboarding() {
             </div>
 
             <button
-                onClick={() => logout({ logoutParams: { returnTo: window.location.origin } })}
+                onClick={() => { void logout(); }}
                 className="mt-6 inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
             >
                 <LogOut size={15} />

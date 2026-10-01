@@ -8,7 +8,6 @@ import { useCallback, useEffect, useState } from "react";
 import { toast } from "~/lib/toast";
 import { Button } from "~/components/ui/button";
 import { ArrowLeftRight, Scale, X, Gamepad2, Trophy, Egg, Play } from "lucide-react";
-import {useAuth0} from "@auth0/auth0-react";
 
 export function meta() {
   return [{ title: "Eloball — Play" }];
